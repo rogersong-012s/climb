@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#eeeae0" />
+    <meta name="description" content="踩準節奏，衝上台北 101！第一人稱樓梯間節奏遊戲。" />
+    <title>登峰灶急｜樓梯間衝刺</title>
+    <link rel="stylesheet" href="./styles/main.css" />
+    <script type="module" src="./js/main.js"></script>
+  </head>
+  <body>
+    <main class="game-shell" id="game">
+      <header class="topbar">
+        <div class="brand-lockup">
+          <span class="brand-mark" aria-hidden="true">↟</span>
+          <div><span class="eyebrow">STAIR SPRINT · TAIPEI 101</span><h1>登峰灶急</h1></div>
+        </div>
+        <div class="stats" aria-label="遊戲資訊">
+          <div class="stat timer-stat"><span class="stat-label">TIME</span><strong id="timer-value">00:00.00</strong></div>
+          <div class="stat combo-stat speed-stat"><span class="stat-label">SPEED</span><strong id="speed-value"><span id="speed-number">0.100</span> <small>F/s</small></strong></div>
+        </div>
+        <button class="pause-button" id="pause-button" type="button" disabled aria-label="暫停遊戲">Ⅱ</button>
+      </header>
+
+      <section class="arena" id="arena" aria-label="第一人稱樓梯間攀登場景">
+        <div class="scene-vignette" aria-hidden="true"></div>
+        <div class="scene-turn-rig" id="scene-turn-rig">
+        <svg id="scene-a" class="stairwell scene-angle scene-angle-a" viewBox="0 0 700 1000" preserveAspectRatio="xMidYMid slice" role="img" aria-label="第一人稱沿磁磚樓梯抵達寬敞平台，平台盡頭有明亮窗戶">
+          <defs>
+            <linearGradient id="aLeftWall" x1="0" x2="1"><stop stop-color="#f7f5ef"/><stop offset="1" stop-color="#e4e1d8"/></linearGradient>
+            <linearGradient id="aRightWall" x1="1" x2="0"><stop stop-color="#fbfaf6"/><stop offset="1" stop-color="#e7e5dd"/></linearGradient>
+            <linearGradient id="aWindow" x1="0" x2="1" y1="0" y2="1"><stop stop-color="#fbffff"/><stop offset=".55" stop-color="#c5e3eb"/><stop offset="1" stop-color="#eef8f5"/></linearGradient>
+            <linearGradient id="aTread" x1="0" x2="0" y1="0" y2="1"><stop stop-color="#fbf9f2"/><stop offset="1" stop-color="#e2ded4"/></linearGradient>
+            <linearGradient id="aRiser" x1="0" x2="0" y1="0" y2="1"><stop stop-color="#c9c5bb"/><stop offset="1" stop-color="#b6b3aa"/></linearGradient>
+          </defs>
+          <rect width="700" height="1000" fill="#f3f1e9"/>
+          <rect x="0" y="-420" width="700" height="420" fill="#eceae2"/>
+          <path fill="#e4e1d8" d="M320 -420H380L447 105H253Z"/>
+          <path fill="url(#aLeftWall)" d="M0 0H235L278 250 242 502V610H0Z"/>
+          <path fill="url(#aRightWall)" d="M700 0H465L422 250 458 502V610H700Z"/>
+          <path fill="#eceae2" d="M0 0h700v84L447 105H253L0 84z"/>
+          <path fill="#e4e1d8" d="M253 105H447L422 250 458 502V610H242V502L278 250Z"/>
+          <path fill="#f8f7f1" stroke="#78868a" stroke-width="8" d="M282 110h136v112H282z"/>
+          <path fill="url(#aWindow)" d="M291 119h118v94H291z"/>
+          <path fill="none" stroke="#829296" stroke-width="4" d="M350 114v108M287 166h126"/>
+          <path fill="#fff" fill-opacity=".62" d="M296 125h46v34h-46z"/>
+          <path fill="#fffdf3" stroke="#c0c9c5" stroke-width="4" d="M306 30h88l11 10-11 10h-88l-11-10z"/>
+          <path fill="#ffe8ae" d="M315 37h70v6h-70z"/>
+          <g class="wall-floor-sign" aria-hidden="true">
+            <rect x="482" y="225" width="106" height="59" rx="3" fill="#fffdf7" stroke="#78878a" stroke-width="3"/>
+            <path d="M482 225h7v59h-7z" fill="#e9a64d"/>
+            <text id="scene-sign-a-floor" x="499" y="261" fill="#3d5055" font-family="Arial, sans-serif" font-size="25" font-weight="800">1.0F</text>
+            <text x="499" y="275" fill="#758285" font-family="Arial, sans-serif" font-size="8" font-weight="700" letter-spacing="1.2">STAIR · UP</text>
+          </g>
+          <path fill="#e9e6de" d="M0 610h700v390H0z"/>
+          <path fill="#aaa69d" d="M0 287H700V297H0Z"/>
+          <path fill="#e8e4da" stroke="#c9c5bb" stroke-width="2" d="M-220 297H920V446H-220Z"/>
+          <path fill="#aaa69d" d="M-220 446h1140v18H-220z"/>
+          <path fill="#fffdf7" d="M-220 446h1140v4H-220z" opacity=".86"/>
+          <path class="old-stair-shadow" fill="#c7c3b9" d="M275 333h150v667H275z" opacity=".26"/>
+          <g class="stair-flight">
+            <path fill="url(#aTread)" stroke="#d0ccc2" stroke-width="2" d="M332 327h36l13 13H319z"/>
+            <path fill="url(#aRiser)" d="M319 340h62v15h-62z"/>
+            <path fill="url(#aTread)" stroke="#d0ccc2" stroke-width="2" d="M319 355h62l16 16h-94z"/>
+            <path fill="url(#aRiser)" d="M303 371h94v18h-94z"/>
+            <path fill="url(#aTread)" stroke="#d0ccc2" stroke-width="2" d="M303 389h94l19 19h-132z"/>
+            <path fill="url(#aRiser)" d="M284 408h132v23H284z"/>
+            <path fill="url(#aTread)" stroke="#d0ccc2" stroke-width="2" d="M284 431h132l22 23H262z"/>
+            <path fill="url(#aRiser)" d="M262 454h176v27H262z"/>
+            <path fill="url(#aTread)" stroke="#d0ccc2" stroke-width="2" d="M262 481h176l28 30H234z"/>
+            <path fill="url(#aRiser)" d="M234 511h204v35H234z"/>
+            <path fill="url(#aTread)" stroke="#d0ccc2" stroke-width="2" d="M234 546h204l31 39H203z"/>
+            <path fill="url(#aRiser)" d="M203 585h235v47H203z"/>
+            <path fill="url(#aTread)" stroke="#d0ccc2" stroke-width="2" d="M203 632h235l37 48H166z"/>
+            <path fill="url(#aRiser)" d="M166 680h272v56H166z"/>
+            <path fill="url(#aTread)" stroke="#d0ccc2" stroke-width="2" d="M166 736h272l44 64H122z"/>
+            <path fill="url(#aRiser)" d="M122 800h316v77H122z"/>
+            <path fill="url(#aTread)" stroke="#d0ccc2" stroke-width="2" d="M122 877h316l58 78H64z"/>
+            <path fill="url(#aRiser)" d="M64 955h374v45H64z"/>
+            <g fill="none" stroke="#fffdf5" stroke-width="3" opacity=".9">
+              <path d="M329 332h42M316 360h68M300 394h100M280 436h140M257 487h186M228 553h216M197 640h247M159 746h286M114 890h330"/>
+            </g>
+          </g>
+          <g class="old-rails" fill="none" stroke="#344247" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M18 978 318 329" stroke-width="13"/>
+            <path d="M24 969 323 323" stroke="#aeb8b5" stroke-width="3"/>
+            <path d="M42 925v72m60-203v74m57-170v71m51-145v59m47-107v47m43-74v35" stroke-width="8"/>
+          </g>
+          <path fill="#c9c6bc" d="M0 610h18v390H0zM682 610h18v390h-18z" opacity=".45"/>
+        </svg>
+        <svg id="scene-b" class="stairwell scene-angle scene-angle-b" viewBox="0 0 700 1000" preserveAspectRatio="xMidYMid slice" role="img" aria-label="第一人稱沿同一段樓梯抵達寬敞平台，平台盡頭有通往轉角的門" aria-hidden="true">
+          <defs>
+            <linearGradient id="bLeftWall" x1="0" x2="1"><stop stop-color="#f7f5ef"/><stop offset="1" stop-color="#e4e1d8"/></linearGradient>
+            <linearGradient id="bRightWall" x1="1" x2="0"><stop stop-color="#fbfaf6"/><stop offset="1" stop-color="#e7e5dd"/></linearGradient>
+            <linearGradient id="bWindow" x1="0" x2="1" y1="0" y2="1"><stop stop-color="#fbffff"/><stop offset="1" stop-color="#bfdee5"/></linearGradient>
+            <linearGradient id="bTread" x1="0" x2="0" y1="0" y2="1"><stop stop-color="#fbf9f2"/><stop offset="1" stop-color="#dedad0"/></linearGradient>
+            <linearGradient id="bRiser" x1="0" x2="0" y1="0" y2="1"><stop stop-color="#c9c5bb"/><stop offset="1" stop-color="#b4b0a6"/></linearGradient>
+            <linearGradient id="bLanding" x1="0" x2="0" y1="0" y2="1"><stop stop-color="#f0ece2"/><stop offset="1" stop-color="#d8d3c8"/></linearGradient>
+          </defs>
+          <rect width="700" height="1000" fill="#f3f1e9"/>
+          <rect x="0" y="-420" width="700" height="420" fill="#eceae2"/>
+          <path fill="#e4e1d8" d="M320 -420H380L447 105H253Z"/>
+          <path fill="url(#bLeftWall)" d="M0 0H235L278 250 242 502V610H0Z"/>
+          <path fill="url(#bRightWall)" d="M700 0H465L422 250 458 502V610H700Z"/>
+          <path fill="#eceae2" d="M0 0h700v84L447 105H253L0 84z"/>
+          <path fill="#e4e1d8" d="M253 105H447L422 250 458 502V610H242V502L278 250Z"/>
+          <path fill="#f8f7f1" stroke="#78868a" stroke-width="8" d="M288 108h124v176H288z"/>
+          <path fill="#c8c4ba" d="M296 116h108v160H296z"/>
+          <path fill="#e2ded4" stroke="#b8b3a9" stroke-width="2" d="M305 124h88v152H305z"/>
+          <path fill="#c5c0b6" d="M387 124h17v152h-17z"/>
+          <circle cx="385" cy="200" r="4" fill="#9a8a6b"/>
+          <path fill="#fffdf3" stroke="#c0c9c5" stroke-width="4" d="M306 30h88l11 10-11 10h-88l-11-10z"/>
+          <path fill="#ffe8ae" d="M315 37h70v6h-70z"/>
+          <g class="wall-floor-sign" aria-hidden="true">
+            <rect x="482" y="225" width="106" height="59" rx="3" fill="#fffdf7" stroke="#78878a" stroke-width="3"/>
+            <path d="M482 225h7v59h-7z" fill="#e9a64d"/>
+            <text id="scene-sign-b-floor" x="499" y="261" fill="#3d5055" font-family="Arial, sans-serif" font-size="25" font-weight="800">1.5F</text>
+            <text x="499" y="275" fill="#758285" font-family="Arial, sans-serif" font-size="8" font-weight="700" letter-spacing="1.2">STAIR · UP</text>
+          </g>
+          <path fill="#e9e6de" d="M0 610h700v390H0z"/>
+          <path fill="#aaa69d" d="M0 287H700V297H0Z"/>
+          <path fill="#e8e4da" stroke="#c9c5bb" stroke-width="2" d="M-220 297H920V446H-220Z"/>
+          <path fill="#aaa69d" d="M-220 446h1140v18H-220z"/>
+          <path fill="#fffdf7" d="M-220 446h1140v4H-220z" opacity=".86"/>
+          <path class="old-stair-shadow" fill="#c4bfb5" d="M204 1000 361 562 700 548v452z" opacity=".52"/>
+          <g class="stair-flight">
+            <path fill="url(#bTread)" stroke="#d0ccc2" stroke-width="2" d="M520 316h70l10 12h-92z"/>
+            <path fill="url(#bRiser)" d="M508 328h92v14h-92z"/>
+            <path fill="url(#bTread)" stroke="#d0ccc2" stroke-width="2" d="M508 342h92l15 15h-122z"/>
+            <path fill="url(#bRiser)" d="M493 357h122v17H493z"/>
+            <path fill="url(#bTread)" stroke="#d0ccc2" stroke-width="2" d="M493 374h122l18 19H475z"/>
+            <path fill="url(#bRiser)" d="M475 393h140v21H475z"/>
+            <path fill="url(#bTread)" stroke="#d0ccc2" stroke-width="2" d="M475 414h140l22 24H453z"/>
+            <path fill="url(#bRiser)" d="M453 438h162v26H453z"/>
+            <path fill="url(#bTread)" stroke="#d0ccc2" stroke-width="2" d="M453 464h162l27 29H426z"/>
+            <path fill="url(#bRiser)" d="M426 493h189v35H426z"/>
+            <path fill="url(#bTread)" stroke="#d0ccc2" stroke-width="2" d="M426 528h189l32 38H394z"/>
+            <path fill="url(#bRiser)" d="M394 566h221v46H394z"/>
+            <path fill="url(#bTread)" stroke="#d0ccc2" stroke-width="2" d="M394 612h221l37 51H357z"/>
+            <path fill="url(#bRiser)" d="M357 663h258v58H357z"/>
+            <path fill="url(#bTread)" stroke="#d0ccc2" stroke-width="2" d="M357 721h258l44 67h-302z"/>
+            <path fill="url(#bRiser)" d="M313 788h302v72H313z"/>
+            <path fill="url(#bTread)" stroke="#d0ccc2" stroke-width="2" d="M313 860h302l58 82H255z"/>
+            <path fill="url(#bRiser)" d="M255 942h360v58H255z"/>
+            <g fill="none" stroke="#fffdf5" stroke-width="3" opacity=".9">
+              <path d="M516 321h78M503 347h101M488 380h128M470 421h145M447 472h172M420 538h198M388 622h228M350 731h269M306 871h315"/>
+            </g>
+          </g>
+          <g class="old-rails" fill="none" stroke="#344247" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M250 938 505 316" stroke-width="13"/>
+            <path d="M256 929 510 310" stroke="#aeb8b5" stroke-width="3"/>
+            <path d="M278 870v74m45-183v63m42-154v55m37-126v48m32-106v39m27-86v30" stroke-width="8"/>
+            <path d="M31 600v116m66-129v109m66-121v100" stroke-width="8"/>
+            <path d="M19 594 171 568" stroke-width="13"/>
+            <path d="M19 588 171 562" stroke="#aeb8b5" stroke-width="3"/>
+          </g>
+          <path fill="#c9c6bc" d="M0 610h18v390H0zM682 610h18v390h-18z" opacity=".45"/>
+        </svg>
+        <svg id="scene-stairs" class="stairwell stair-core" viewBox="0 0 700 1000" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+          <defs>
+          <linearGradient id="stepTread" x1="0" x2="0" y1="0" y2="1"><stop stop-color="#fffdf8"/><stop offset="1" stop-color="#e3dfd5"/></linearGradient>
+          <linearGradient id="stepRiser" x1="0" x2="0" y1="0" y2="1"><stop stop-color="#c9c5bb"/><stop offset="1" stop-color="#b4b0a6"/></linearGradient>
+          <linearGradient id="sideStringer" x1="0" x2="1"><stop stop-color="#ddd9cf"/><stop offset="1" stop-color="#b8b4aa"/></linearGradient>
+          <linearGradient id="stairRightWall" x1="0" x2="1"><stop stop-color="#f0ede5"/><stop offset="1" stop-color="#d5d1c8"/></linearGradient>
+          </defs>
+          <g class="stair-structure" transform="translate(0 144)">
+          <g class="next-flight-back" aria-hidden="true">
+            <path d="M0 131 182 311H0Z" fill="#bbb8af" stroke="#a7a39a" stroke-width="2"/>
+            <g class="next-flight-rail" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M6 123 12 120 195 289 189 295Z" fill="#344247"/>
+              <path d="M9 123 11 122 192 290 190 291Z" fill="#b5bfbc" opacity=".9"/>
+              <g fill="none" stroke="#344247">
+                <path d="M42 159v14" stroke-width="4"/>
+                <path d="M87 200v17" stroke-width="5"/>
+                <path d="M132 241v21" stroke-width="6"/>
+                <path d="M169 274v25" stroke-width="7"/>
+              </g>
+              <g fill="#344247">
+                <path d="m37 171 10-1v5l-10 1z"/>
+                <path d="m81 213 12-1v6l-12 1z"/>
+                <path d="m125 256 14-1v7l-14 1z"/>
+                <path d="m161 292 16-1v8l-16 1z"/>
+              </g>
+            </g>
+          </g>
+          <g class="stair-run" transform="translate(-120 0)">
+          <path fill="url(#sideStringer)" d="M300 292 28 1000h60l248-697z"/>
+          <g class="stair-flight">
+            <path fill="url(#stepTread)" stroke="#c9c5bb" stroke-width="2" d="M330 294h390l30 18H320z"/>
+            <path fill="url(#stepRiser)" d="M320 312h430v22H320z"/>
+            <path fill="url(#stepTread)" stroke="#c9c5bb" stroke-width="2" d="M320 334h430l40 20H307z"/>
+            <path fill="url(#stepRiser)" d="M307 354h483v20H307z"/>
+            <path fill="url(#stepTread)" stroke="#c9c5bb" stroke-width="2" d="M307 374h483l40 27H290z"/>
+            <path fill="url(#stepRiser)" d="M290 401h540v22H290z"/>
+            <path fill="url(#stepTread)" stroke="#c9c5bb" stroke-width="2" d="M290 423h540l40 34H268z"/>
+            <path fill="url(#stepRiser)" d="M268 457h602v27H268z"/>
+            <path fill="url(#stepTread)" stroke="#c9c5bb" stroke-width="2" d="M268 484h602l50 40H242z"/>
+            <path fill="url(#stepRiser)" d="M242 524h678v32H242z"/>
+            <path fill="url(#stepTread)" stroke="#c9c5bb" stroke-width="2" d="M242 556h678l50 50H212z"/>
+            <path fill="url(#stepRiser)" d="M212 606h758v40H212z"/>
+            <path fill="url(#stepTread)" stroke="#c9c5bb" stroke-width="2" d="M212 646h758l50 64H178z"/>
+            <path fill="url(#stepRiser)" d="M178 710h842v60H178z"/>
+            <path fill="url(#stepTread)" stroke="#c9c5bb" stroke-width="2" d="M178 770h842l60 77H136z"/>
+            <path fill="url(#stepRiser)" d="M136 847h944v68H136z"/>
+            <path fill="url(#stepTread)" stroke="#c9c5bb" stroke-width="2" d="M136 915h944l80 85H88z"/>
+            <path fill="url(#stepRiser)" d="M88 1000h1072v50H88z"/>
+            <g fill="none" stroke="#fffdf5" stroke-width="3" opacity=".88">
+              <path d="M330 299H716M320 340H746M307 381H786M290 430H826M268 494H866M242 566H916M212 657H966M178 782H1016M136 928H1076"/>
+            </g>
+            <g fill="none" stroke="#c9c5bb" stroke-width="2" opacity=".72">
+              <path d="M320 322H750M307 364H790M290 412H830M268 469H870M242 538H920M212 624H970M178 742H1020M136 880H1080"/>
+          </g>
+          </g>
+          <g class="stair-rail" transform="translate(24 0)" fill="none" stroke="#354448" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M300 264 28 964" stroke-width="15"/>
+            <path d="M304 264 32 956" stroke="#b5bfbc" stroke-width="4"/>
+            <path d="M281 313v84m-39 16v88m-41 18v101m-45 15v121m-50 7v144" stroke-width="9"/>
+          </g>
+          </g>
+          <path d="M600 0H700V980H680V710L600 295Z" fill="url(#stairRightWall)" stroke="#c9c5bb" stroke-width="2"/>
+          <path d="M600 0V295L680 710V980" fill="none" stroke="#c2beb4" stroke-width="2" opacity=".72"/>
+          <path fill="#aaa69d" d="M0 143H600V153H0Z"/>
+        <path fill="#fffdf7" opacity=".86" d="M0 143H600V147H0Z"/>
+          </g>
+        </svg>
+        </div>
+        <canvas class="turn-scene" id="turn-scene" aria-hidden="true"></canvas>
+        <div class="scene-motion-lines" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+
+        <div class="scene-hud" aria-label="場景資訊">
+          <div class="floor-marker"><span id="scene-view-label">1.0F 視角</span><strong id="scene-floor">1.0F</strong><small id="scene-target">上行至 1.5F</small></div>
+          <div class="combo-stamp" id="combo-stamp" aria-hidden="true"><span>連段</span><strong id="combo-stamp-value">0</strong></div>
+        </div>
+        <div class="debuff-card" id="debuff-card" hidden>
+          <span class="debuff-icon" id="debuff-icon">〰</span>
+          <span><strong id="debuff-name"></strong><small id="debuff-description"></small></span>
+          <b class="debuff-count"><i id="debuff-remaining"></i>F</b>
+        </div>
+        <div class="climber" id="climber" aria-hidden="true"><span class="shoe shoe-left"></span><span class="shoe shoe-right"></span></div>
+
+        <section class="qte-layer" id="qte-layer" aria-live="polite" aria-label="樓梯間中的怪物快速反應事件" hidden></section>
+      </section>
+
+      <section class="rhythm-panel" aria-label="節奏操作區">
+        <div class="rhythm-header"><span class="operation-label" id="rhythm-label">節奏球</span><div class="feedback-pill" id="feedback" aria-live="polite">準備好了嗎？</div></div>
+        <div class="rhythm-track" id="rhythm-track" aria-label="節奏判定軌道">
+          <div class="track-zones" id="track-zones" aria-hidden="true"></div>
+          <div class="rhythm-ball" id="rhythm-ball"><span></span></div>
+        </div>
+        <div class="rhythm-footer">
+          <div class="best-record"><span>BEST</span><strong id="best-value">尚未登頂</strong></div>
+          <span class="control-hint"><span class="desktop-hint">SPACE</span><span class="mobile-hint">點一下</span> 依序踩拍</span>
+          <button class="hit-button" id="hit-button" type="button" aria-label="踩下節奏鍵"><span class="hit-mark" aria-hidden="true">▼</span><strong>踩！</strong></button>
+        </div>
+      </section>
+
+      <div class="modal-layer" id="modal-layer" hidden></div>
+      <div class="screen-reader-only" id="announcer" aria-live="assertive"></div>
+    </main>
+  </body>
+</html>
