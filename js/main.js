@@ -17,6 +17,7 @@ game.subscribe((state) => ui.render(state, game));
 
 document.addEventListener('keydown', (event) => {
   if (event.code === 'Space') {
+    if (event.target instanceof Element && event.target.closest('button, input, select, textarea, [contenteditable="true"]')) return;
     event.preventDefault();
     if (!event.repeat) game.pressRhythm();
   } else if (event.code === 'Escape') {
@@ -30,7 +31,7 @@ function pauseForFocusLoss() {
   if ([
     'CLIMBING', 'EVENT_WARNING', 'MONSTER_ENTRANCE', 'MONSTER_CAST', 'MONSTER_IMPACT',
     'ATTACK_TO_DEBUFF_DELAY', 'DEBUFF_REVEAL', 'DEBUFF_TO_ANSWER_DELAY', 'ANSWER_PREVIEW', 'MONSTER_QTE',
-    'COMBAT_ATTACK_INTRO', 'COMBAT_ATTACK', 'COMBAT_ATTACK_SETTLE', 'COMBAT_DEFENSE_INTRO',
+    'COMBAT_ATTACK_INTRO', 'COMBAT_ATTACK', 'COMBAT_RAPID_TAP', 'COMBAT_ATTACK_SETTLE', 'COMBAT_DEFENSE_INTRO',
     'COMBAT_DEFENSE', 'COMBAT_DEFENSE_SUCCESS', 'COMBAT_DEFENSE_FAILED', 'COMBAT_VICTORY'
   ].includes(mode)) game.pause();
 }

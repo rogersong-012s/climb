@@ -7,7 +7,12 @@ export const RHYTHM_PHASE = Object.freeze({
   FINISHED: 'FINISHED'
 });
 
-export function createRhythmRound(random = Math.random, id = 0, beatDurationMs = GAME_CONFIG.rhythmBeatDurationMs) {
+export function createRhythmRound(
+  random = Math.random,
+  id = 0,
+  beatDurationMs = GAME_CONFIG.rhythmBeatDurationMs,
+  readyDurationMs = beatDurationMs * GAME_CONFIG.rhythmPrepareBeats
+) {
   const typeIds = Object.keys(RHYTHM_TYPES);
   const pickedIndex = Math.min(typeIds.length - 1, Math.floor(random() * typeIds.length));
   const typeId = typeIds[Math.max(0, pickedIndex)];
@@ -20,7 +25,7 @@ export function createRhythmRound(random = Math.random, id = 0, beatDurationMs =
     totalBeats: type.totalBeats,
     hitBeats: [...type.hitBeats],
     beatDurationMs,
-    readyDurationMs: beatDurationMs * GAME_CONFIG.rhythmPrepareBeats,
+    readyDurationMs,
     readyElapsedMs: 0,
     elapsedMs: 0,
     respawnRemainingMs: 0,

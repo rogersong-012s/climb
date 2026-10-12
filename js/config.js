@@ -28,43 +28,48 @@ export const GAME_CONFIG = Object.freeze({
   fatigueHitZonePenalty: 0.04,
   fatigueMinHitZoneWidth: 0.14,
   rhythmBeatDurationMs: 500,
+  rhythmMoveSpeedMultiplier: 1.3,
   rhythmPrepareBeats: 2,
   rhythmReadyRingStartScale: 1.9,
   rhythmReadyFlashMs: 100,
   rhythmRespawnDelayMs: 100,
   rhythmBallEdgeGapPx: 12,
   monsterQteDurationMs: 6000,
-  monsterMaxHp: 3,
-  combatDamagePerHit: 1,
+  monsterMaxHp: 100,
   combatRoundIntroDurationMs: 800,
-  combatDefenseProjectileTravelTimeMs: 600,
-  combatDefenseProjectileIntervalMs: 200,
-  combatDefenseHitWindowMs: 200,
+  combatDefenseVortexChargeDurationMs: 500,
+  combatDefenseHitWindowMs: 300,
+  combatDefenseLaserDurationMs: 220,
+  combatDefenseHitEffectDurationMs: 360,
+  combatDefenseShieldCrackDurationMs: 120,
+  // Percent of the stairwell arena height; the UI clamps this above the rhythm controls.
+  combatDefenseShieldY: 87,
+  combatDefenseVortexY: 54,
+  combatDefenseLaserPierceAfterShieldPercent: 8,
+  combatDefenseVortexFlashDurationMs: 200,
+  combatDefenseInitialRandomDelayMinMs: 0,
+  combatDefenseInitialRandomDelayMaxMs: 200,
+  combatDefenseSuccessImpactDurationMs: 350,
+  combatDefenseSuccessSplashDurationMs: 350,
+  combatDefenseSuccessSplashOpacity: 0.22,
   combatDefenseResultDurationMs: 650,
+  combatRapidTapPrepareDelayMs: 100,
+  combatRapidTapDurationMs: 2000,
+  combatRapidTapBallScale: 0.7,
+  combatRapidTapBaseDamage: 20,
+  combatRapidTapDamageMultiplier: 2,
   combatDefensePatterns: Object.freeze([
     Object.freeze({
-      id: 'TWO_SHIELDS',
-      shields: Object.freeze([
-        Object.freeze({ id: 'left', x: 27, y: 66 }),
-        Object.freeze({ id: 'right', x: 73, y: 66 })
-      ]),
-      projectiles: Object.freeze([
-        Object.freeze({ id: 'A', targetShieldId: 'left', launchIndex: 0 }),
-        Object.freeze({ id: 'B', targetShieldId: 'right', launchIndex: 1 })
-      ])
+      id: 'RED',
+      color: 'red',
+      laserColor: '#ff645b',
+      attackTimesMs: Object.freeze([600, 1200])
     }),
     Object.freeze({
-      id: 'THREE_SHIELDS',
-      shields: Object.freeze([
-        Object.freeze({ id: 'left', x: 20, y: 63 }),
-        Object.freeze({ id: 'center', x: 50, y: 71 }),
-        Object.freeze({ id: 'right', x: 80, y: 63 })
-      ]),
-      projectiles: Object.freeze([
-        Object.freeze({ id: 'A', targetShieldId: 'left', launchIndex: 0 }),
-        Object.freeze({ id: 'B', targetShieldId: 'center', launchIndex: 1 }),
-        Object.freeze({ id: 'C', targetShieldId: 'right', launchIndex: 2 })
-      ])
+      id: 'BLUE',
+      color: 'blue',
+      laserColor: '#4285f4',
+      attackTimesMs: Object.freeze([800, 1400, 2200])
     })
   ]),
   combatPlayerAttackDurationMs: 460,
@@ -124,7 +129,7 @@ export const UI_TEXT = Object.freeze({
   menuEyebrow: 'READY, CLIMBER?',
   startButton: '開始登頂',
   howToTitle: '怎麼玩？',
-  howToLines: ['樓梯會自動向上；依照球的節奏，在黃色拍點按 SPACE 或「踩！」。', '完成整組節奏可加速，速度會隨時間緩慢下降。', '到平台會轉身換一段樓梯；遇到怪物就點字母解法！'],
+  howToLines: ['樓梯會自動向上；依照球的節奏，在黃色拍點按 SPACE 或點擊畫面。', '完成整組節奏可加速，速度會隨時間緩慢下降。', '遇到怪物時依序拼字；戰鬥中按 SPACE 或點擊畫面攻防。'],
   pauseTitle: '先喘口氣',
   pauseBody: '台北 101 不會趁你休息偷偷長高。',
   resumeButton: '繼續攀登',
@@ -159,11 +164,12 @@ export const UI_TEXT = Object.freeze({
   debuffApplied: '留下 {name} 狀態',
   debuffCured: '魔法解除',
   qtePassed: '安全通過',
-  combatAttackHit: '命中怪物！',
+  combatAttackHit: '節奏命中！準備連打',
   combatAttackMiss: '攻擊落空，準備防禦',
   combatAttackRound: '攻擊回合！',
   combatDefenseRound: '防禦回合！',
-  combatDefensePrompt: '點擊亮起的白盾',
+  combatRapidTapPrompt: '連打輸出！',
+  combatDefensePrompt: '按下操作鍵防禦',
   combatDefenseSuccess: '防禦成功',
   combatDefenseFailure: '防禦失敗',
   combatMonsterDefeated: '怪物擊敗！繼續攀登',

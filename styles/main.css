@@ -47,6 +47,9 @@ button:focus-visible { outline: 3px solid #478aa0; outline-offset: 3px; }
   padding-top: env(safe-area-inset-top);
   padding-bottom: env(safe-area-inset-bottom);
   overflow: hidden;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
   background: #f3f1e9;
   box-shadow: 0 0 0 1px rgba(71, 83, 83, .14), 0 15px 58px rgba(60, 70, 68, .22);
 }
@@ -142,20 +145,13 @@ h1 { margin: 0; color: #fffdf4; font-size: clamp(21px, 3vh, 29px); font-weight: 
 .track-zone.is-locked { opacity: .48; }
 .rhythm-ball { position: absolute; z-index: 3; top: 50%; left: 0; display: grid; width: 25px; height: 25px; place-items: center; border: 2px solid #fff8df; border-radius: 50%; background: radial-gradient(circle at 35% 30%, #fff4ca, #ffa933 65%, #e87936); box-shadow: 0 0 8px #ffc45b, 0 0 19px rgba(255,176,51,.72), 0 3px 5px rgba(35,45,47,.3); transform: translate(-50%, -50%); transition: left .025s linear; }
 .rhythm-ball span { width: 6px; height: 6px; border-radius: 50%; background: white; box-shadow: 0 0 8px white; }
-.rhythm-footer { display: grid; grid-template-columns: 1fr 1.3fr auto; align-items: center; gap: 8px; min-height: 55px; }
+.rhythm-footer { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 8px; min-height: 55px; }
 .best-record { display: grid; gap: 2px; min-width: 0; }
 .best-record span { color: #7b8a8a; font: 700 10px/1 var(--condensed); letter-spacing: .17em; }
 .best-record strong { overflow: hidden; color: #4a5b60; font: 500 12px/1.15 var(--mono); font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }
 .control-hint { color: #5d6b6e; font-size: 11px; font-weight: 800; text-align: center; white-space: nowrap; }
 .control-hint .desktop-hint, .control-hint .mobile-hint { display: inline-block; margin-right: 3px; padding: 3px 5px; border: 1px solid rgba(80,94,94,.32); border-radius: 3px; background: rgba(255,255,255,.57); color: #485a5e; font: 700 11px var(--mono); }
 .mobile-hint { display: none !important; }
-.hit-button { display: flex; align-items: center; justify-content: center; gap: 8px; min-width: 100px; min-height: 50px; padding: 4px 14px; border: 1px solid rgba(255,255,255,.72); border-radius: 5px; background: linear-gradient(180deg, #ffc56c, #ed9945); color: #553b25; cursor: pointer; box-shadow: 0 3px 0 #bd763b, 0 5px 12px rgba(91,71,46,.2), inset 0 1px rgba(255,255,255,.45); transition: transform .08s, filter .12s, opacity .12s; touch-action: manipulation; }
-.hit-button:hover:not(:disabled) { filter: brightness(1.05); }
-.hit-button:active:not(:disabled) { transform: translateY(3px); box-shadow: 0 1px 0 #bd763b; }
-.hit-button:disabled { opacity: .52; cursor: default; }
-.hit-button.is-ready { animation: button-ready 1.9s ease-in-out infinite; }
-.hit-mark { color: #9a6132; font-size: 15px; }
-.hit-button strong { font-size: 21px; font-weight: 900; }
 
 .qte-layer { position: absolute; z-index: 8; inset: 0; overflow: hidden; isolation: isolate; background: rgba(248,190,93,.08); animation: qte-arrive .18s ease-out; }
 .qte-layer::before { content: ''; position: absolute; z-index: -1; inset: 0; border: 3px solid rgba(238,139,61,.74); box-shadow: inset 0 0 38px rgba(250,195,106,.12); animation: alert-pulse .8s ease-in-out infinite alternate; pointer-events: none; }
@@ -238,7 +234,6 @@ h1 { margin: 0; color: #fffdf4; font-size: clamp(21px, 3vh, 29px); font-weight: 
 @keyframes steps { from { transform: translate(-50%, 1px) rotate(-2deg); } to { transform: translate(-50%, -5px) rotate(2deg); } }
 @keyframes slip { 35% { transform: translate(-50%, 20px) rotate(8deg); } 100% { transform: translate(-50%, 0) rotate(0); } }
 @keyframes feedback-pop { 45% { transform: scale(1.26); } }
-@keyframes button-ready { 50% { box-shadow: 0 3px 0 #bd763b, 0 0 15px rgba(245,179,75,.34), inset 0 1px rgba(255,255,255,.45); } }
 @keyframes monster-pop { from { opacity: .4; transform: translate(-50%, 9px) scale(.83); } to { opacity: 1; transform: translate(-50%, 0) scale(1); } }
 @keyframes qte-arrive { from { opacity: .55; } to { opacity: 1; } }
 @keyframes alert-pulse { to { opacity: .58; } }
@@ -288,15 +283,12 @@ h1 { margin: 0; color: #fffdf4; font-size: clamp(21px, 3vh, 29px); font-weight: 
   .operation-label { font-size: 11px; }
   .feedback-pill { font-size: 12px; }
   .rhythm-track { height: 43px; margin-bottom: 7px; }
-  .rhythm-footer { grid-template-columns: .84fr 1.06fr auto; gap: 5px; min-height: 51px; }
+  .rhythm-footer { grid-template-columns: 1fr auto; gap: 5px; min-height: 51px; }
   .best-record span { font-size: 9px; }
   .best-record strong { font-size: 10px; }
   .control-hint { font-size: 10px; }
   .control-hint .desktop-hint { display: none; }
   .control-hint .mobile-hint { display: inline-block !important; font-size: 10px; }
-  .hit-button { min-width: 84px; min-height: 48px; gap: 6px; padding: 3px 10px; }
-  .hit-button strong { font-size: 20px; }
-  .hit-mark { font-size: 14px; }
   .qte-banner { top: 9px; width: calc(100% - 20px); padding: 7px 9px 6px; }
   .qte-alert { font-size: 14px; }
   .qte-clock { font-size: 14px; }
@@ -315,9 +307,8 @@ h1 { margin: 0; color: #fffdf4; font-size: clamp(21px, 3vh, 29px); font-weight: 
   .timer-stat strong { font-size: 19px; }
   .combo-stat strong { font-size: 27px; }
   .rhythm-panel { padding-right: 10px; padding-left: 10px; }
-  .rhythm-footer { grid-template-columns: .78fr 1fr auto; gap: 4px; }
+  .rhythm-footer { grid-template-columns: 1fr auto; gap: 4px; }
   .control-hint { font-size: 8px; }
-  .hit-button { min-width: 76px; padding-inline: 7px; }
   .letter-tile { width: 45px; height: 45px; }
 }
 
@@ -331,7 +322,6 @@ h1 { margin: 0; color: #fffdf4; font-size: clamp(21px, 3vh, 29px); font-weight: 
   .rhythm-panel { padding-top: 6px; padding-bottom: max(8px, env(safe-area-inset-bottom)); }
   .rhythm-track { height: 36px; margin-bottom: 5px; }
   .rhythm-footer { min-height: 44px; }
-  .hit-button { min-height: 42px; }
   .monster-presence { top: 34%; width: clamp(86px, 18%, 102px); }
   .letter-grid { inset: 58% 4% 4%; }
   .modal-card { padding-top: 15px; padding-bottom: 15px; }
@@ -464,6 +454,15 @@ h1 { letter-spacing: .06em; }
 .rhythm-track.is-resolved:not(.is-feedback-active) .track-zones { filter: grayscale(1); opacity: .48; }
 .rhythm-track.is-resolved .rhythm-ball { opacity: 1; }
 .rhythm-track.is-resolved:not(.is-feedback-active) .rhythm-ball { filter: grayscale(1) contrast(1.08); }
+.rhythm-track.is-rapid-tap {
+  border-color: rgba(255,174,76,.94);
+  background:
+    repeating-linear-gradient(90deg, transparent 0 calc(12.5% - 1px), rgba(255,255,255,.2) calc(12.5% - 1px) 12.5%),
+    linear-gradient(180deg, #b7652a, #f39a35 52%, #dc742b);
+  box-shadow: inset 0 1px 5px rgba(78,37,12,.4), 0 0 12px rgba(255,153,52,.4), 0 1px 0 #fff;
+}
+.rhythm-track.is-rapid-tap .track-zones { opacity: 0; }
+.rhythm-track.is-rapid-tap .rhythm-ball { transition: none; }
 .track-zone {
   border-right: 1px solid rgba(255,255,255,.72);
   border-left: 1px solid rgba(255,255,255,.72);
@@ -478,6 +477,10 @@ h1 { letter-spacing: .06em; }
   background: radial-gradient(circle at 34% 28%, #fff8e8 0 12%, color-mix(in srgb, var(--rhythm-ball-color, #ff8038) 55%, white) 35%, var(--rhythm-ball-color, #ff8038) 78%);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--rhythm-ball-color, #ff8038) 28%, transparent), 0 3px 9px rgba(15,32,49,.3);
 }
+.rhythm-ball.is-rapid-tap-ball { width: calc(24px * var(--rhythm-ball-scale, .7)); height: calc(24px * var(--rhythm-ball-scale, .7)); }
+.operation-label.is-rapid-tap-counter { color: #da7026; font: 800 14px/1 var(--mono); letter-spacing: .04em; }
+.operation-label.is-tap-pop { animation: rapid-tap-counter-pop .13s ease-out; }
+@keyframes rapid-tap-counter-pop { 45% { transform: scale(1.14); color: #ff8d37; } }
 .rhythm-ball::before {
   position: absolute;
   top: 50%;
@@ -501,6 +504,8 @@ h1 { letter-spacing: .06em; }
 .rhythm-ball.is-launching { animation: rhythm-launch-flash var(--rhythm-ready-flash-duration, 100ms) ease-out; }
 .rhythm-ball span { width: 5px; height: 5px; background: #fff; box-shadow: none; }
 .rhythm-ball.is-tapping { animation: rhythm-ball-tap .15s ease-out; }
+.rhythm-ball.is-paused.is-tapping,
+.is-game-paused .operation-label.is-tap-pop { animation-play-state: paused; }
 .rhythm-track.is-rhythm-hit { animation: rhythm-hit-flash .36s ease-out; }
 .rhythm-track.is-rhythm-miss { animation: rhythm-miss-shake .3s ease-out; }
 .best-record span { color: #6d87a1; font-family: var(--condensed); letter-spacing: .12em; }
@@ -515,21 +520,6 @@ h1 { letter-spacing: .06em; }
   font-family: var(--mono);
   box-shadow: 0 1px 0 rgba(34,70,107,.08);
 }
-.hit-button {
-  position: relative;
-  min-width: 102px;
-  border: 1px solid rgba(255,255,255,.72);
-  border-radius: 12px;
-  background: linear-gradient(135deg, #ff9850, #ff7834);
-  color: #233b51;
-  box-shadow: 0 5px 14px rgba(224,105,44,.22), inset 0 1px 0 rgba(255,255,255,.45);
-  transition: transform .1s, filter .12s, opacity .12s, box-shadow .12s;
-}
-.hit-button:hover:not(:disabled) { filter: brightness(1.04); box-shadow: 0 7px 18px rgba(224,105,44,.28), inset 0 1px 0 rgba(255,255,255,.5); }
-.hit-button:active:not(:disabled) { transform: translateY(1px) scale(.98); box-shadow: 0 2px 8px rgba(224,105,44,.2); }
-.hit-button.is-ready { animation: button-ready 1.9s ease-in-out infinite; }
-.hit-mark { color: #fff4df; }
-.hit-button strong { color: #fffaf1; letter-spacing: .06em; }
 
 .qte-layer { background: rgba(42,111,201,.035); }
 .qte-layer::before {
@@ -874,6 +864,9 @@ h1 { letter-spacing: .06em; }
   animation: combat-shield-ring var(--combat-shield-duration, 760ms) ease-out both;
 }
 .combat-shield span { transform: translateY(-3px); }
+.combat-shield.is-red { background: linear-gradient(145deg, #fff0ed, #ff887d 56%, #d94854); filter: drop-shadow(0 0 14px rgba(255,95,87,.64)); }
+.combat-shield.is-blue { background: linear-gradient(145deg, #e9f6ff, #6ab6ff 56%, #2874cf); }
+.combat-shield b { position: absolute; bottom: 14%; font: 850 17px/1 var(--mono); text-shadow: 0 1px rgba(34,58,78,.5); }
 .combat-feedback {
   position: absolute;
   z-index: 6;
@@ -957,18 +950,25 @@ h1 { letter-spacing: .06em; }
   animation: combat-round-intro var(--combat-round-intro-duration, 800ms) cubic-bezier(.2,.75,.28,1) both;
 }
 .combat-round-prompt.is-attack { color: #ffd18a; }
-.combat-round-prompt.is-defense { color: #cceaff; }
+.combat-round-prompt.is-defense { top: 20%; color: #cceaff; }
 @keyframes combat-round-intro {
   0% { opacity: 0; scale: .74; }
   15% { opacity: 1; scale: 1.08; }
   25%, 80% { opacity: 1; scale: 1; }
   100% { opacity: 0; scale: .96; }
 }
-.combat-defense-field { position: absolute; z-index: 5; inset: 0; pointer-events: none; }
+.combat-defense-field {
+  --laser-color: #4285f4;
+  --laser-glow: color-mix(in srgb, var(--laser-color), transparent 24%);
+  position: absolute;
+  z-index: 5;
+  inset: 0;
+  pointer-events: none;
+}
 .combat-defense-instruction {
   position: absolute;
   z-index: 2;
-  top: 86%;
+  top: calc(var(--shield-y, 72%) + 7%);
   left: 50%;
   margin: 0;
   color: #f4f9ff;
@@ -984,92 +984,287 @@ h1 { letter-spacing: .06em; }
   position: absolute;
   z-index: 4;
   display: grid;
-  width: clamp(68px, 18vw, 86px);
-  height: clamp(76px, 20vw, 96px);
+  width: clamp(86px, 23vw, 112px);
+  height: clamp(96px, 26vw, 124px);
   place-items: center;
   padding: 8px;
   border: 0;
-  border-radius: 20px;
   background: transparent;
   filter: drop-shadow(0 4px 7px rgba(23,48,66,.32));
+  opacity: 0;
   transform: translate(-50%, -50%);
-  cursor: pointer;
-  pointer-events: auto;
-  touch-action: manipulation;
-  transition: scale .12s ease, filter .14s ease;
+  pointer-events: none;
+  transition: filter .14s ease;
 }
+.defense-shield.is-visible { opacity: 1; }
 .defense-shield svg { width: 100%; height: 100%; overflow: visible; }
-.defense-shield svg path {
+.defense-shield .defense-shield-cracks {
+  position: absolute;
+  inset: 8px;
+  width: calc(100% - 16px);
+  height: calc(100% - 16px);
+  box-sizing: border-box;
+  overflow: visible;
+  opacity: 0;
+  transform-origin: center;
+  pointer-events: none;
+}
+.defense-shield svg.defense-shield-cracks path {
+  fill: none;
+  stroke: rgba(39,54,67,.9);
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: bevel;
+  vector-effect: non-scaling-stroke;
+}
+.defense-shield-cracks.is-active {
+  animation: defense-shield-crack var(--combat-defense-shield-crack-duration, 120ms) ease-out both;
+}
+.defense-shield.is-cracked {
+  animation: defense-shield-crack-jolt var(--combat-defense-shield-crack-duration, 120ms) ease-out both;
+}
+.defense-shield > svg:first-of-type path {
   fill: #f8fcff;
   stroke: #637f94;
   stroke-width: 2.4;
   stroke-linejoin: round;
   transition: fill .12s ease, stroke .12s ease;
 }
-.defense-shield:hover { scale: 1.05; }
-.defense-shield:focus-visible { outline: 3px solid #8dd9ff; outline-offset: 2px; }
+.defense-shield.is-red > svg:first-of-type path { fill: #ffe2e0; stroke: #db4b51; }
+.defense-shield.is-blue > svg:first-of-type path { fill: #d9eeff; stroke: #338be1; }
+.defense-shield > b {
+  position: absolute;
+  bottom: 7%;
+  color: #314a60;
+  font: 850 clamp(15px, 4vw, 20px)/1 var(--mono);
+  text-shadow: 0 1px #fff;
+}
 .defense-shield.is-active {
   filter: drop-shadow(0 0 8px rgba(190,237,255,.92)) drop-shadow(0 0 18px rgba(75,169,255,.76));
   animation: defense-shield-ready .22s ease-in-out infinite alternate;
 }
-.defense-shield.is-active svg path { fill: #fff; stroke: #53aaff; stroke-width: 3.2; }
-.defense-shield.is-defended svg path { fill: #d6f1ff; stroke: #3d9bda; }
+.defense-shield.is-active > svg:first-of-type path { fill: #fff; stroke: #53aaff; stroke-width: 3.2; }
+.defense-shield.is-red.is-active { filter: drop-shadow(0 0 8px rgba(255,191,170,.95)) drop-shadow(0 0 18px rgba(255,83,76,.76)); }
+.defense-shield.is-red.is-active > svg:first-of-type path { fill: #fff; stroke: #f45150; }
+.defense-shield.is-blue.is-active { filter: drop-shadow(0 0 8px rgba(190,237,255,.92)) drop-shadow(0 0 18px rgba(75,169,255,.76)); }
+.defense-shield.is-defended > svg:first-of-type path { fill: #d6f1ff; stroke: #3d9bda; }
+.defense-shield.is-red.is-defended > svg:first-of-type path { fill: #fff0ec; stroke: #ec5f58; }
+.defense-shield.is-blue.is-defended > svg:first-of-type path { fill: #e7f4ff; stroke: #4285f4; }
 .defense-shield.is-defended { animation: defense-shield-block .28s cubic-bezier(.2,.8,.28,1) both; }
 .defense-shield.is-blocked::after {
   position: absolute;
-  inset: 2px;
-  border: 2px solid rgba(196,239,255,.95);
+  inset: -4px;
+  border: 2px solid rgba(255,255,255,.98);
   border-radius: 50%;
   content: '';
   pointer-events: none;
-  animation: defense-impact-ring .28s ease-out both;
+  animation: defense-impact-ring var(--combat-defense-success-impact-duration, 350ms) ease-out both;
 }
-.defense-shield.is-missed svg path { fill: #ffd5d0; stroke: #e25e57; }
+.defense-shield.is-blocked::before {
+  position: absolute;
+  inset: 20%;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255,255,255,.96), rgba(223,247,255,.66) 42%, transparent 76%);
+  content: '';
+  pointer-events: none;
+  animation: defense-impact-core var(--combat-defense-success-impact-duration, 350ms) ease-out both;
+}
+.defense-shield.is-blocked { z-index: 7; }
+.defense-shield.is-missed > svg:first-of-type path { fill: #ffd5d0; stroke: #e25e57; }
+.defense-shield.is-blue.is-missed > svg:first-of-type path { fill: #d8eaff; stroke: #347fdb; }
 .defense-shield.is-complete:not(.is-active) { opacity: .68; }
 @keyframes defense-shield-ready { to { scale: 1.1; } }
 @keyframes defense-shield-block { 35% { scale: 1.18; filter: drop-shadow(0 0 16px rgba(150,225,255,.95)); } }
+@keyframes defense-shield-crack {
+  0% { opacity: 0; scale: .9; }
+  16% { opacity: 1; scale: 1.02; }
+  64% { opacity: .94; scale: 1; }
+  100% { opacity: 0; scale: 1; }
+}
+@keyframes defense-shield-crack-jolt {
+  0%, 100% { translate: 0 0; scale: 1; }
+  28% { translate: -1px 1px; scale: .99; }
+  58% { translate: 1px -1px; scale: 1; }
+}
 @keyframes defense-impact-ring {
   from { opacity: .9; scale: .58; }
   to { opacity: 0; scale: 1.22; }
 }
-.defense-projectile {
+@keyframes defense-impact-core {
+  0% { opacity: .95; scale: .36; }
+  42% { opacity: .85; scale: 1; }
+  100% { opacity: 0; scale: 1.36; }
+}
+.combat-defense-field.is-blue { --laser-glow: color-mix(in srgb, var(--laser-color), transparent 18%); }
+.defense-vortex {
+  position: absolute;
+  z-index: 2;
+  top: var(--laser-start-y, 54%);
+  left: 50%;
+  display: grid;
+  width: clamp(68px, 16vw, 88px);
+  aspect-ratio: 1;
+  place-items: center;
+  border: 2px solid color-mix(in srgb, var(--laser-color), white 32%);
+  border-radius: 50%;
+  background: radial-gradient(circle, transparent 16%, color-mix(in srgb, var(--laser-color), transparent 82%) 36%, transparent 69%);
+  box-shadow: 0 0 18px 3px var(--laser-glow), inset 0 0 22px var(--laser-glow);
+  opacity: .9;
+  transform: translate(-50%, -50%);
+  transition: filter .12s ease, scale .12s ease;
+  animation: defense-vortex-breathe 1.2s ease-in-out infinite alternate;
+  pointer-events: none;
+}
+.defense-vortex::before,
+.defense-vortex::after,
+.defense-vortex i {
+  position: absolute;
+  inset: 8%;
+  border: 2px solid color-mix(in srgb, var(--laser-color), white 25%);
+  border-right-color: transparent;
+  border-bottom-color: color-mix(in srgb, var(--laser-color), transparent 42%);
+  border-radius: 50%;
+  content: '';
+}
+.defense-vortex::before { animation: defense-vortex-spin 1.35s linear infinite; }
+.defense-vortex::after { inset: 22%; border-width: 3px; border-left-color: transparent; animation: defense-vortex-spin .9s linear infinite reverse; }
+.defense-vortex i:nth-child(1) { inset: 36%; border-width: 2px; border-top-color: transparent; animation: defense-vortex-spin 1.7s linear infinite; }
+.defense-vortex i:nth-child(2) { inset: 2%; border-width: 1px; border-style: dashed; opacity: .68; animation: defense-vortex-spin 3.4s linear infinite reverse; }
+.defense-vortex i:nth-child(3) { inset: 43%; border: 0; background: radial-gradient(circle, #fff 0 12%, var(--laser-color) 45%, transparent 76%); box-shadow: 0 0 14px 5px var(--laser-glow); }
+.defense-vortex.is-rhythm-flash {
+  animation-name: defense-vortex-breathe, defense-vortex-rhythm-flash;
+  animation-duration: 1.2s, var(--combat-defense-vortex-flash-duration, 200ms);
+  animation-timing-function: ease-in-out, ease-in-out;
+  animation-iteration-count: infinite, 1;
+  animation-direction: alternate, normal;
+  animation-delay: 0ms, var(--vortex-flash-delay, 0ms);
+}
+.defense-vortex.is-rhythm-flash i:nth-child(3) {
+  background: radial-gradient(circle, #fff 0 18%, color-mix(in srgb, var(--laser-color), white 8%) 44%, transparent 78%);
+  box-shadow: 0 0 20px 8px var(--laser-glow);
+}
+.defense-laser {
+  position: absolute;
+  z-index: 3;
+  top: var(--laser-start-y, 54%);
+  left: 50%;
+  display: block;
+  width: clamp(10px, 3vw, 17px);
+  height: var(--laser-blocked-height, 18%);
+  border-radius: 50% 50% 3px 3px;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--laser-color), white 28%) 24%, #fff 50%, color-mix(in srgb, var(--laser-color), white 25%) 76%, transparent);
+  box-shadow: 0 0 12px 5px var(--laser-glow), 0 0 26px var(--laser-glow);
+  opacity: 0;
+  transform: translateX(-50%) scaleY(var(--laser-progress, 0));
+  transform-origin: top center;
+  pointer-events: none;
+}
+.defense-laser::after {
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  width: 190%;
+  height: 12px;
+  border-radius: 50%;
+  background: radial-gradient(ellipse, #fff 0 16%, color-mix(in srgb, var(--laser-color), white 10%) 38%, transparent 78%);
+  content: '';
+  box-shadow: 0 0 10px 4px var(--laser-glow);
+  transform: translate(-50%, -50%);
+}
+.defense-laser.is-flying { opacity: 1; }
+.defense-laser.is-blocked {
+  opacity: 1;
+  transform: translateX(-50%) scaleY(1);
+  animation: defense-laser-blocked var(--combat-defense-laser-duration, 220ms) ease-out both;
+}
+.defense-laser.is-piercing {
+  z-index: 5;
+  height: var(--laser-pierce-height, 26%);
+  opacity: 1;
+  transform: translateX(-50%) scaleY(1);
+  animation: defense-laser-pierce var(--combat-defense-laser-duration, 220ms) ease-out both;
+}
+.defense-laser[hidden] { display: none; }
+.defense-impact-splash {
   position: absolute;
   z-index: 6;
+  inset: 0;
   display: block;
-  width: clamp(18px, 4.7vw, 25px);
-  aspect-ratio: 1;
-  border: 2px solid rgba(255,255,255,.96);
-  border-radius: 50%;
-  background: radial-gradient(circle at 35% 28%, #fff 0 13%, #ffde9b 32%, #ff8d50 68%, #e84448 86%);
-  box-shadow: 0 0 12px 4px rgba(255,123,73,.58), inset 0 0 6px #fff;
-  transform: translate(-50%, -50%);
+  opacity: 0;
+  transform: scale(.68);
+  transform-origin: 50% var(--shield-y, 72%);
   pointer-events: none;
-  will-change: left, top;
 }
-.defense-projectile.is-near-impact { box-shadow: 0 0 16px 6px rgba(255,224,165,.82), inset 0 0 7px #fff; }
-.defense-projectile[hidden] { display: none; }
-.qte-layer.is-combat-hit-flash::after {
-  position: absolute;
-  z-index: 12;
-  inset: 4px;
-  border: 4px solid rgba(255,93,87,.9);
-  border-radius: 12px;
-  box-shadow: inset 0 0 24px rgba(255,81,72,.24), 0 0 20px rgba(255,81,72,.5);
-  content: '';
-  pointer-events: none;
-  animation: combat-red-edge-hit 260ms ease-out both;
+.defense-impact-splash.is-white {
+  background: radial-gradient(ellipse at 50% var(--shield-y, 72%), rgba(255,255,255,var(--combat-defense-success-splash-opacity, .22)), rgba(234,248,255,.13) 25%, rgba(255,255,255,.07) 48%, transparent 78%);
 }
-@keyframes combat-red-edge-hit {
-  0% { opacity: 0; }
-  22% { opacity: .92; }
-  100% { opacity: 0; }
+.defense-impact-splash.is-red { background: radial-gradient(ellipse at 50% var(--shield-y, 72%), rgba(255,92,77,.3), rgba(255,75,64,.18) 38%, rgba(255,66,57,.06) 64%, transparent 83%); }
+.defense-impact-splash.is-blue { background: radial-gradient(ellipse at 50% var(--shield-y, 72%), rgba(66,133,244,.3), rgba(47,121,238,.18) 38%, rgba(47,121,238,.06) 64%, transparent 83%); }
+.defense-impact-splash.is-active.is-white { animation: defense-screen-success-impact var(--combat-defense-success-splash-duration, 350ms) ease-out both; }
+.defense-impact-splash.is-active.is-red,
+.defense-impact-splash.is-active.is-blue { animation: defense-screen-impact var(--combat-defense-hit-effect-duration, 360ms) ease-out both; }
+.defense-impact-splash[hidden] { display: none; }
+@keyframes defense-vortex-spin { to { rotate: 360deg; } }
+@keyframes defense-vortex-breathe { to { opacity: 1; filter: brightness(1.18); } }
+@keyframes defense-vortex-rhythm-flash {
+  0% {
+    filter: brightness(1.18) saturate(1.12) drop-shadow(0 0 8px var(--laser-glow));
+    scale: 1;
+    background: radial-gradient(circle, color-mix(in srgb, var(--laser-color), white 12%) 0 12%, color-mix(in srgb, var(--laser-color), transparent 72%) 38%, transparent 72%);
+    box-shadow: 0 0 20px 4px var(--laser-glow), inset 0 0 22px var(--laser-glow);
+  }
+  34% {
+    filter: brightness(1.9) saturate(1.35) drop-shadow(0 0 18px var(--laser-glow));
+    scale: 1.08;
+    background: radial-gradient(circle, #fff 0 13%, color-mix(in srgb, var(--laser-color), white 8%) 35%, color-mix(in srgb, var(--laser-color), transparent 52%) 62%, transparent 78%);
+    box-shadow: 0 0 34px 11px var(--laser-glow), inset 0 0 34px var(--laser-glow);
+  }
+  58% {
+    filter: brightness(1.82) saturate(1.3) drop-shadow(0 0 16px var(--laser-glow));
+    scale: 1.06;
+    box-shadow: 0 0 30px 9px var(--laser-glow), inset 0 0 30px var(--laser-glow);
+  }
+  100% {
+    filter: brightness(1.22) saturate(1.12) drop-shadow(0 0 9px var(--laser-glow));
+    scale: 1;
+    background: radial-gradient(circle, color-mix(in srgb, var(--laser-color), white 12%) 0 12%, color-mix(in srgb, var(--laser-color), transparent 72%) 38%, transparent 72%);
+    box-shadow: 0 0 21px 4px var(--laser-glow), inset 0 0 23px var(--laser-glow);
+  }
 }
+@keyframes defense-laser-blocked {
+  0% { opacity: 1; transform: translateX(-50%) scaleY(1); }
+  100% { opacity: 0; transform: translateX(-50%) scaleY(1); }
+}
+@keyframes defense-laser-pierce {
+  0% { opacity: 1; transform: translateX(-50%) scaleY(var(--laser-impact-start-progress, .92)); }
+  72% { opacity: 1; transform: translateX(-50%) scaleY(1); }
+  100% { opacity: 0; transform: translateX(-50%) scaleY(1); }
+}
+@keyframes defense-screen-impact {
+  0% { opacity: 0; transform: scale(.68); }
+  28% { opacity: .94; }
+  100% { opacity: 0; transform: scale(1.15); }
+}
+@keyframes defense-screen-success-impact {
+  0% { opacity: 0; transform: scale(.58); }
+  24% { opacity: 1; }
+  100% { opacity: 0; transform: scale(1.22); }
+}
+.qte-layer.is-paused .defense-vortex,
+.qte-layer.is-paused .defense-vortex::before,
+.qte-layer.is-paused .defense-vortex::after,
+.qte-layer.is-paused .defense-vortex i,
+.qte-layer.is-paused .defense-laser,
+.qte-layer.is-paused .defense-impact-splash { animation-play-state: paused; }
+.qte-layer.is-paused .defense-vortex.is-rhythm-flash { animation-play-state: paused; }
 .qte-layer.is-combat-defense-failed .combat-defense-failed { color: #ffc5bd; }
 .qte-layer.is-paused .combat-round-prompt,
 .qte-layer.is-paused .defense-shield.is-active,
 .qte-layer.is-paused .defense-shield.is-defended,
-.qte-layer.is-paused .defense-shield.is-blocked::after,
-.qte-layer.is-paused.is-combat-hit-flash::after { animation-play-state: paused; }
+.qte-layer.is-paused .defense-shield.is-cracked,
+.qte-layer.is-paused .defense-shield-cracks,
+.qte-layer.is-paused .defense-shield.is-blocked::before,
+.qte-layer.is-paused .defense-shield.is-blocked::after { animation-play-state: paused; }
 .modal-card {
   border: 1px solid rgba(76,117,158,.18);
   border-top: 3px solid var(--electric-blue);
@@ -1107,7 +1302,6 @@ h1 { letter-spacing: .06em; }
 
 .value-pop { animation: value-pop .2s cubic-bezier(.2,1.5,.4,1); }
 @keyframes value-pop { 50% { transform: scale(1.14); color: var(--amber); } }
-@keyframes button-ready { 50% { box-shadow: 0 7px 18px rgba(224,105,44,.3), 0 0 0 4px rgba(67,139,255,.11); } }
 
 /* Compact, lighter top HUD */
 .topbar {

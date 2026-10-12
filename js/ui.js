@@ -1050,7 +1050,6 @@ export function createUI(onAction) {
   const trackZones = byId('track-zones');
   const rhythmLabel = byId('rhythm-label');
   const ball = byId('rhythm-ball');
-  const hitButton = byId('hit-button');
   const feedback = byId('feedback');
   const bestValue = byId('best-value');
   const debuffCard = byId('debuff-card');
@@ -1083,9 +1082,7 @@ export function createUI(onAction) {
   let lastMonsterImpactSerial = 0;
   let lastDebuffCureSerial = 0;
   let lastCombatViewMode = null;
-  let lastCombatAttackSerial = 0;
   let lastCombatMonsterId = null;
-  let lastCombatDamageFlashSerial = 0;
 
   function antiDizzinessSetting(state) {
     const enabled = state.antiDizzinessMode === ANTI_DIZZINESS_MODE.ON;
@@ -1293,20 +1290,57 @@ export function createUI(onAction) {
       monsterVitalsMarkup(state.activeMonster, state.monsterHp, state.monsterMaxHp);
   }
 
-  function buildCombatDefenseMarkup(round) {
+  function buildCombatDefenseMarkup(round, { shieldVisible = false, showVortex = true, showInstruction = false } = {}) {
     if (!round) return '';
-    const projectiles = round.projectiles.map((projectile) =>
-      '<span class="defense-projectile" data-shot-id="' + escapeHtml(projectile.id) + '" aria-hidden="true"></span>'
+    const impactSplashes = round.attacks.map((attack) =>
+      '<span class="defense-impact-splash" data-impact-id="' + escapeHtml(attack.id) + '" aria-hidden="true" hidden></span>'
     ).join('');
-    const shields = round.shields.map((shield, index) =>
-      '<button class="defense-shield" type="button" data-shield-id="' + escapeHtml(shield.id) + '" ' +
+    const shield = round.shield;
+    const arenaRect = arena.getBoundingClientRect();
+    const rhythmPanel = track.closest('.rhythm-panel');
+    const rhythmPanelRect = rhythmPanel?.getBoundingClientRect();
+    if (arenaRect.height > 0 && rhythmPanelRect?.height > 0) {
+      const viewportWidth = globalThis.innerWidth || gameRoot.clientWidth;
+      const shieldHeight = Math.min(124, Math.max(96, viewportWidth * 0.26));
+      const safeCenterY = rhythmPanelRect.top - arenaRect.top - shieldHeight / 2 - 8;
+      const safeYPercent = safeCenterY / arenaRect.height * 100;
+      shield.y = Math.min(
+        GAME_CONFIG.combatDefenseShieldY,
+        Math.max(0, safeYPercent)
+      );
+    }
+    const visibleClass = shieldVisible ? ' is-visible' : '';
+    const laserStartY = GAME_CONFIG.combatDefenseVortexY;
+    const blockedLaserHeight = Math.max(0, Number(shield.y) - laserStartY);
+    const piercingLaserHeight = blockedLaserHeight + GAME_CONFIG.combatDefenseLaserPierceAfterShieldPercent;
+    const lasers = round.attacks.map((attack) =>
+      '<span class="defense-laser" data-laser-id="' + escapeHtml(attack.id) + '" aria-hidden="true" ' +
+      'style="--laser-progress:0;--laser-impact-start-progress:' +
+      (piercingLaserHeight > 0 ? blockedLaserHeight / piercingLaserHeight : 1) + '" hidden></span>'
+    ).join('');
+    const shieldMarkup = '<div class="defense-shield is-' + escapeHtml(round.shieldColor) + visibleClass + '" ' +
       'style="left:' + Number(shield.x) + '%;top:' + Number(shield.y) + '%" ' +
-      'aria-label="盾牌 ' + (index + 1) + '，尚未亮起">' +
+      'aria-label="' + (round.shieldColor === 'red' ? '紅盾，防禦兩次攻擊' : '藍盾，防禦三次攻擊') + '">' +
       '<svg viewBox="0 0 48 56" aria-hidden="true"><path d="M24 3 43 10v15c0 13-8 22-19 28C13 47 5 38 5 25V10z"/></svg>' +
-      '</button>'
-    ).join('');
-    return '<div class="combat-defense-field" aria-label="點擊亮起的白盾防禦">' +
-      projectiles + shields + '<p class="combat-defense-instruction">點擊亮起的白盾</p></div>';
+      '<svg class="defense-shield-cracks" viewBox="0 0 48 56" aria-hidden="true" hidden>' +
+      '<path d="M24 27 19 20 22 15 16 9 M19 20 12 21 8 16 M24 27 29 21 26 15 31 10 M29 21 37 22 40 17 M24 27 19 33 22 39 17 47 M19 33 11 32 8 37 M24 27 30 33 27 40 33 47 M30 33 37 31 40 37"/>' +
+      '</svg>' +
+      '<b>×' + round.attackCount + '</b></div>';
+    const vortex = showVortex
+      ? '<div class="defense-vortex is-' + escapeHtml(round.shieldColor) + '" aria-hidden="true"><i></i><i></i><i></i></div>'
+      : '';
+    const instruction = showInstruction
+      ? '<p class="combat-defense-instruction">SPACE／點擊畫面任意處防禦</p>'
+      : '';
+    return '<div class="combat-defense-field is-' + escapeHtml(round.shieldColor) + '" style="--laser-color:' +
+      escapeHtml(round.laserColor) + ';--shield-y:' + Number(shield.y) + '%;--laser-start-y:' + laserStartY +
+      '%;--laser-blocked-height:' + blockedLaserHeight + '%;--laser-pierce-height:' + piercingLaserHeight +
+      '%;--combat-defense-vortex-flash-duration:' + GAME_CONFIG.combatDefenseVortexFlashDurationMs +
+      'ms;--combat-defense-success-impact-duration:' + GAME_CONFIG.combatDefenseSuccessImpactDurationMs +
+      'ms;--combat-defense-success-splash-duration:' + GAME_CONFIG.combatDefenseSuccessSplashDurationMs +
+      'ms;--combat-defense-success-splash-opacity:' + GAME_CONFIG.combatDefenseSuccessSplashOpacity +
+      '" aria-label="依盾牌亮起時按操作鍵防禦">' +
+      vortex + lasers + impactSplashes + shieldMarkup + instruction + '</div>';
   }
 
   function appendQteTiles(grid, qte) {
@@ -1339,15 +1373,24 @@ export function createUI(onAction) {
     } else if (mode === 'COMBAT_ATTACK') {
       phaseMarkup = '<span class="player-attack-projectile" aria-hidden="true"></span>';
     } else if (mode === 'COMBAT_ATTACK_SETTLE') {
-      phaseMarkup = '<span class="player-attack-projectile is-firing" aria-hidden="true"></span>';
+      phaseMarkup = '<span class="player-attack-projectile is-firing" aria-hidden="true"></span>' +
+        '<p class="combat-feedback combat-damage-label">DMG ' + Math.max(0, Number(state.combatPendingDamage) || 0) + '</p>';
     } else if (mode === 'COMBAT_DEFENSE_INTRO') {
-      phaseMarkup = '<p class="combat-round-prompt is-defense">' + escapeHtml(UI_TEXT.combatDefenseRound) + '</p>';
+      phaseMarkup = '<p class="combat-round-prompt is-defense">' + escapeHtml(UI_TEXT.combatDefenseRound) + '</p>' +
+        buildCombatDefenseMarkup(state.combatDefenseRound, { shieldVisible: false, showVortex: true });
     } else if (mode === 'COMBAT_DEFENSE') {
-      phaseMarkup = buildCombatDefenseMarkup(state.combatDefenseRound);
+      phaseMarkup = buildCombatDefenseMarkup(state.combatDefenseRound, {
+        shieldVisible: true,
+        showVortex: true,
+        showInstruction: true
+      });
     } else if (mode === 'COMBAT_DEFENSE_SUCCESS') {
-      phaseMarkup = '<div class="combat-shield" aria-hidden="true"><span>◆</span></div><p class="combat-feedback">' + escapeHtml(UI_TEXT.combatDefenseSuccess) + '</p>';
+      const defenseRound = state.combatDefenseRound;
+      phaseMarkup = buildCombatDefenseMarkup(defenseRound, { shieldVisible: true, showVortex: false }) +
+        '<p class="combat-feedback">' + escapeHtml(UI_TEXT.combatDefenseSuccess) + '</p>';
     } else if (mode === 'COMBAT_DEFENSE_FAILED') {
-      phaseMarkup = '<p class="combat-feedback combat-defense-failed">' + escapeHtml(UI_TEXT.combatDefenseFailure) + '</p>';
+      phaseMarkup = buildCombatDefenseMarkup(state.combatDefenseRound, { shieldVisible: true, showVortex: false }) +
+        '<p class="combat-feedback combat-defense-failed">' + escapeHtml(UI_TEXT.combatDefenseFailure) + '</p>';
     } else if (mode === 'COMBAT_VICTORY') {
       phaseMarkup = '<p class="combat-feedback combat-victory-label">' + escapeHtml(UI_TEXT.combatMonsterDefeated) + '</p>';
     }
@@ -1356,53 +1399,138 @@ export function createUI(onAction) {
     qteLayer.style.removeProperty('--monster-entrance-delay');
     qteLayer.style.removeProperty('--monster-cast-delay');
     qteLayer.style.removeProperty('--combat-attack-delay');
-    qteLayer.style.setProperty('--combat-round-intro-duration', GAME_CONFIG.combatRoundIntroDurationMs + 'ms');
+    qteLayer.style.setProperty('--combat-round-intro-duration',
+      (mode === 'COMBAT_DEFENSE_INTRO'
+        ? GAME_CONFIG.combatDefenseVortexChargeDurationMs
+        : GAME_CONFIG.combatRoundIntroDurationMs) + 'ms');
     if (mode === 'COMBAT_ATTACK_SETTLE') {
       qteLayer.style.setProperty('--combat-attack-delay', -(GAME_CONFIG.combatPlayerAttackDurationMs - state.eventPhaseDurationMs) + 'ms');
     }
     lastQteObject = null;
     lastQteMessage = '';
     lastCombatViewMode = mode;
-    if (mode !== 'COMBAT_ATTACK') lastCombatAttackSerial = state.combatAttackSerial;
   }
 
-  function updateCombatDefenseRound(round) {
+  function updateCombatDefenseRound(round, state, mode) {
     if (!round) return;
-    const nowMs = round.elapsedMs;
-    round.projectiles.forEach((projectile) => {
-      const ball = qteLayer.querySelector('[data-shot-id="' + projectile.id + '"]');
-      const target = round.shields.find((shield) => shield.id === projectile.targetShieldId);
-      if (!ball || !target) return;
-      const visible = nowMs >= projectile.launchTimeMs && nowMs < projectile.impactTimeMs;
-      ball.hidden = !visible;
-      if (!visible) return;
-      const rawProgress = Math.max(0, Math.min(1, (nowMs - projectile.launchTimeMs) /
-        Math.max(1, projectile.impactTimeMs - projectile.launchTimeMs)));
-      const easedProgress = 1 - (1 - rawProgress) ** 2;
-      const x = 50 + (target.x - 50) * easedProgress;
-      const y = 44 + (target.y - 44) * easedProgress - Math.sin(Math.PI * rawProgress) * 3;
-      ball.style.left = x + '%';
-      ball.style.top = y + '%';
-      ball.classList.toggle('is-near-impact', nowMs >= projectile.windowStartMs);
+    const isResultPhase = mode === 'COMBAT_DEFENSE_SUCCESS' || mode === 'COMBAT_DEFENSE_FAILED';
+    const nowMs = round.elapsedMs + (isResultPhase ? state.eventPhaseElapsedMs : 0);
+    round.attacks.forEach((attack) => {
+      const laser = qteLayer.querySelector('[data-laser-id="' + attack.id + '"]');
+      const impactElapsedMs = nowMs - attack.attackTimeMs;
+      if (laser) {
+        const inFlight = nowMs >= attack.launchTimeMs && nowMs < attack.attackTimeMs &&
+          ['scheduled', 'active', 'defended'].includes(attack.status);
+        const inImpact = ['blocked', 'missed'].includes(attack.status) && impactElapsedMs >= 0 &&
+          impactElapsedMs < GAME_CONFIG.combatDefenseLaserDurationMs;
+        const visible = inFlight || inImpact;
+        const flightProgress = attack.flightDurationMs > 0
+          ? Math.max(0, Math.min(1, (nowMs - attack.launchTimeMs) / attack.flightDurationMs))
+          : (nowMs >= attack.launchTimeMs ? 1 : 0);
+        const impactStatus = inImpact ? attack.status : '';
+        const impactStatusChanged = impactStatus && laser.dataset.impactStatus !== impactStatus;
+        if (impactStatusChanged) {
+          laser.classList.remove('is-blocked', 'is-piercing');
+          laser.style.animationDelay = '-' + Math.max(0, impactElapsedMs) + 'ms';
+          void laser.offsetWidth;
+          laser.dataset.impactStatus = impactStatus;
+        } else if (!impactStatus && laser.dataset.impactStatus) {
+          delete laser.dataset.impactStatus;
+          laser.style.removeProperty('animation-delay');
+        }
+        laser.hidden = !visible;
+        laser.style.setProperty('--laser-progress', String(inImpact ? 1 : flightProgress));
+        laser.classList.toggle('is-flying', inFlight);
+        laser.classList.toggle('is-blocked', inImpact && attack.status === 'blocked');
+        laser.classList.toggle('is-piercing', inImpact && attack.status === 'missed');
+      }
+
+      const splash = qteLayer.querySelector('[data-impact-id="' + attack.id + '"]');
+      if (!splash) return;
+      const splashDurationMs = attack.status === 'blocked'
+        ? GAME_CONFIG.combatDefenseSuccessSplashDurationMs
+        : GAME_CONFIG.combatDefenseHitEffectDurationMs;
+      const splashVisible = ['blocked', 'missed'].includes(attack.status) && impactElapsedMs >= 0 &&
+        impactElapsedMs < splashDurationMs;
+      splash.hidden = !splashVisible;
+      if (splashVisible && splash.dataset.effect !== attack.status) {
+        splash.dataset.effect = attack.status;
+        splash.classList.remove('is-active', 'is-white', 'is-red', 'is-blue');
+        splash.classList.add(attack.status === 'blocked' ? 'is-white' : round.shieldColor === 'red' ? 'is-red' : 'is-blue');
+        splash.style.animationDelay = '-' + Math.max(0, impactElapsedMs) + 'ms';
+        void splash.offsetWidth;
+        splash.classList.add('is-active');
+      } else if (!splashVisible && splash.dataset.effect) {
+        delete splash.dataset.effect;
+        splash.classList.remove('is-active', 'is-white', 'is-red', 'is-blue');
+        splash.style.removeProperty('animation-delay');
+      }
     });
 
-    round.shields.forEach((shield, index) => {
-      const button = qteLayer.querySelector('[data-shield-id="' + shield.id + '"]');
-      if (!button) return;
-      const shots = round.projectiles.filter((projectile) => projectile.targetShieldId === shield.id);
-      const active = shots.some((projectile) => projectile.status === 'active');
-      const defended = shots.some((projectile) => projectile.status === 'defended' || projectile.status === 'blocked');
-      const blocked = shots.some((projectile) => projectile.status === 'blocked');
-      const missed = shots.some((projectile) => projectile.status === 'missed');
-      const complete = shots.length > 0 && shots.every((projectile) => ['blocked', 'missed'].includes(projectile.status));
-      button.classList.toggle('is-active', active);
-      button.classList.toggle('is-defended', defended);
-      button.classList.toggle('is-blocked', blocked);
-      button.classList.toggle('is-missed', missed);
-      button.classList.toggle('is-complete', complete);
-      const stateText = active ? '現在點擊' : complete ? (missed ? '未擋下' : '已擋下') : defended ? '已點擊，等待抵達' : '尚未亮起';
-      button.setAttribute('aria-label', '盾牌 ' + (index + 1) + '，' + stateText);
-    });
+    const shield = qteLayer.querySelector('.defense-shield');
+    if (!shield) return;
+    const shots = round.attacks;
+    const active = shots.some((attack) => attack.status === 'active');
+    const defended = shots.some((attack) => attack.status === 'defended');
+    const blocked = shots.some((attack) => attack.status === 'blocked' &&
+      nowMs >= attack.attackTimeMs && nowMs - attack.attackTimeMs < GAME_CONFIG.combatDefenseSuccessImpactDurationMs);
+    const missed = shots.some((attack) => attack.status === 'missed' &&
+      nowMs >= attack.attackTimeMs && nowMs - attack.attackTimeMs < GAME_CONFIG.combatDefenseLaserDurationMs);
+    shield.classList.toggle('is-active', active);
+    shield.classList.toggle('is-defended', defended);
+    shield.classList.toggle('is-blocked', blocked);
+    shield.classList.toggle('is-missed', missed);
+    shield.classList.toggle('is-complete', round.resolvedCount >= round.attackCount);
+    const crackDurationMs = GAME_CONFIG.combatDefenseShieldCrackDurationMs;
+    const crackAttack = shots
+      .filter((attack) => attack.status === 'missed' && nowMs >= attack.attackTimeMs &&
+        nowMs - attack.attackTimeMs < crackDurationMs)
+      .sort((first, second) => second.attackTimeMs - first.attackTimeMs)[0];
+    const cracks = shield.querySelector('.defense-shield-cracks');
+    if (cracks) {
+      cracks.hidden = !crackAttack;
+      shield.classList.toggle('is-cracked', Boolean(crackAttack));
+      if (crackAttack && cracks.dataset.attackId !== crackAttack.id) {
+        cracks.dataset.attackId = crackAttack.id;
+        const crackAgeMs = Math.max(0, nowMs - crackAttack.attackTimeMs);
+        shield.style.setProperty('--combat-defense-shield-crack-duration', crackDurationMs + 'ms');
+        shield.style.animationDelay = '-' + crackAgeMs + 'ms';
+        cracks.style.animationDelay = '-' + crackAgeMs + 'ms';
+        cracks.classList.remove('is-active');
+        void cracks.offsetWidth;
+        cracks.classList.add('is-active');
+      } else if (!crackAttack && cracks.dataset.attackId) {
+        delete cracks.dataset.attackId;
+        cracks.classList.remove('is-active');
+        shield.style.removeProperty('--combat-defense-shield-crack-duration');
+        shield.style.removeProperty('animation-delay');
+        cracks.style.removeProperty('--combat-defense-shield-crack-duration');
+        cracks.style.removeProperty('animation-delay');
+      }
+    }
+    shield.setAttribute('aria-label', (round.shieldColor === 'red' ? '紅盾，' : '藍盾，') +
+      (active ? '現在按下防禦' : defended ? '已按下，等待雷射發射' : '待命'));
+
+    const vortex = qteLayer.querySelector('.defense-vortex');
+    if (vortex) {
+      if (vortex.dataset.flashEndListener !== 'true') {
+        vortex.dataset.flashEndListener = 'true';
+        vortex.addEventListener('animationend', (event) => {
+          if (event.animationName !== 'defense-vortex-rhythm-flash') return;
+          vortex.classList.remove('is-rhythm-flash');
+          vortex.style.removeProperty('--vortex-flash-delay');
+        });
+      }
+      const flashSerial = Number(round.vortexFlashSerial) || 0;
+      const renderedFlashSerial = Number(vortex.dataset.flashSerial) || 0;
+      if (flashSerial !== renderedFlashSerial) {
+        vortex.dataset.flashSerial = String(flashSerial);
+        vortex.classList.remove('is-rhythm-flash');
+        vortex.style.setProperty('--vortex-flash-delay', '0ms');
+        void vortex.offsetWidth;
+        vortex.classList.add('is-rhythm-flash');
+      }
+    }
   }
 
   function updateCombatVitals(state) {
@@ -1415,25 +1543,6 @@ export function createUI(onAction) {
     fill.style.width = ((hp / maxHp) * 100) + '%';
     value.textContent = hp + '/' + maxHp;
     vitals.setAttribute('aria-label', state.activeMonster.name + ' HP ' + hp + ' / ' + maxHp);
-  }
-
-  function triggerCombatAttackAnimation(state) {
-    if (state.combatAttackSerial < lastCombatAttackSerial) lastCombatAttackSerial = state.combatAttackSerial;
-    if (state.combatAttackSerial <= lastCombatAttackSerial) return;
-    lastCombatAttackSerial = state.combatAttackSerial;
-    const projectile = qteLayer.querySelector('.player-attack-projectile');
-    if (!projectile) return;
-    projectile.classList.remove('is-firing');
-    void qteLayer.offsetWidth;
-    projectile.classList.add('is-firing');
-  }
-
-  function triggerCombatDefenseHitFlash(state) {
-    if (state.combatDamageFlashSerial === lastCombatDamageFlashSerial) return;
-    lastCombatDamageFlashSerial = state.combatDamageFlashSerial;
-    qteLayer.classList.remove('is-combat-hit-flash');
-    void qteLayer.offsetWidth;
-    qteLayer.classList.add('is-combat-hit-flash');
   }
 
   function buildMonsterEntrance(monster, elapsedMs = 0, hp = GAME_CONFIG.monsterMaxHp, maxHp = GAME_CONFIG.monsterMaxHp) {
@@ -1541,8 +1650,10 @@ export function createUI(onAction) {
   function updateRhythmTrack(state, game) {
     const activeMode = state.mode === 'PAUSED' ? state.resumeMode : state.mode;
     const round = state.rhythmRound;
+    const rapidTap = activeMode === 'COMBAT_RAPID_TAP' ? state.combatRapidTap : null;
     const windows = game.getRhythmHitWindows();
-    const ballDiameter = 24;
+    const ballScale = rapidTap ? GAME_CONFIG.combatRapidTapBallScale : 1;
+    const ballDiameter = 25 * ballScale;
     const ballRadius = ballDiameter / 2;
     const edgeInset = ballRadius + GAME_CONFIG.rhythmBallEdgeGapPx;
     const trackPosition = (progress) => 'calc(' + (progress * 100) + '% + ' + (edgeInset - 2 * edgeInset * progress) + 'px)';
@@ -1564,14 +1675,20 @@ export function createUI(onAction) {
       ball.style.setProperty('--rhythm-ready-ring-end-scale', String(1 / ringScale));
     }
 
-    if (round) {
+    if (rapidTap) {
+      rhythmLabel.textContent = 'TAP × ' + rapidTap.tapCount;
+      rhythmLabel.classList.add('is-rapid-tap-counter');
+    } else if (round) {
+      rhythmLabel.classList.remove('is-rapid-tap-counter', 'is-tap-pop');
       rhythmLabel.textContent = (activeMode === 'COMBAT_ATTACK' ? '攻擊回合 · ' : '') +
         round.label + ' · ' + round.inputIndex + '/' + round.hitBeats.length;
     } else {
+      rhythmLabel.classList.remove('is-rapid-tap-counter', 'is-tap-pop');
       const rhythmModeLabels = {
         COMBAT_ATTACK_INTRO: '準備攻擊',
+        COMBAT_RAPID_TAP: '連打輸出',
         COMBAT_DEFENSE_INTRO: '準備防禦',
-        COMBAT_DEFENSE: '點擊亮起的白盾',
+        COMBAT_DEFENSE: 'SPACE／點擊任意處防禦',
         MONSTER_QTE: 'QTE 中斷節奏'
       };
       rhythmLabel.textContent = rhythmModeLabels[activeMode] ?? '等待節奏球';
@@ -1587,13 +1704,19 @@ export function createUI(onAction) {
       marker.dataset.status = window.status;
     });
 
-    const ballVisible = Boolean(round && round.phase !== RHYTHM_PHASE.FINISHED);
+    const ballVisible = Boolean((round && round.phase !== RHYTHM_PHASE.FINISHED) || rapidTap);
     ball.hidden = !ballVisible;
     ball.style.display = ballVisible ? 'grid' : 'none';
-    ball.style.left = trackPosition(game.getBallPosition());
+    const ballProgress = rapidTap
+      ? rapidTap.elapsedMs / Math.max(1, rapidTap.durationMs)
+      : game.getBallPosition();
+    ball.style.left = trackPosition(ballProgress);
     ball.style.setProperty('--rhythm-ball-color', round?.color ?? '#ff8038');
+    ball.style.setProperty('--rhythm-ball-scale', String(ballScale));
     ball.classList.toggle('is-ready', round?.phase === RHYTHM_PHASE.SPAWN_READY);
     ball.classList.toggle('is-paused', state.mode === 'PAUSED');
+    ball.classList.toggle('is-rapid-tap-ball', Boolean(rapidTap));
+    track.classList.toggle('is-rapid-tap', Boolean(rapidTap));
     const isRoundResolved = round?.phase === RHYTHM_PHASE.RESOLVED || round?.phase === RHYTHM_PHASE.FINISHED;
     track.classList.toggle('is-resolved', isRoundResolved);
     if (state.rhythmLaunchSerial !== lastRhythmLaunchSerial) {
@@ -1608,7 +1731,12 @@ export function createUI(onAction) {
       lastRhythmTapSerial = state.rhythmTapSerial;
       ball.classList.remove('is-tapping');
       void ball.offsetWidth;
-      if (round) ball.classList.add('is-tapping');
+      if (round || rapidTap) ball.classList.add('is-tapping');
+      if (rapidTap) {
+        rhythmLabel.classList.remove('is-tap-pop');
+        void rhythmLabel.offsetWidth;
+        rhythmLabel.classList.add('is-tap-pop');
+      }
     }
     if (state.rhythmFeedbackSerial !== lastRhythmFeedbackSerial) {
       lastRhythmFeedbackSerial = state.rhythmFeedbackSerial;
@@ -1633,7 +1761,6 @@ export function createUI(onAction) {
     const isAnswerPreview = activeMode === 'ANSWER_PREVIEW';
     const isMonsterQte = activeMode === 'MONSTER_QTE' && Boolean(state.activeQte);
     const isCombat = activeMode.startsWith('COMBAT_') && Boolean(state.activeMonster);
-    const isCombatAttack = activeMode === 'COMBAT_ATTACK';
     const isCombatDefense = activeMode === 'COMBAT_DEFENSE' && Boolean(state.combatDefenseRound);
     const isMonsterPresentation = isMonsterEntrance || isMonsterCast || isMonsterImpact || isAttackToDebuffDelay ||
       isDebuffReveal || isDebuffToAnswerDelay || isAnswerPreview;
@@ -1654,6 +1781,7 @@ export function createUI(onAction) {
     qteLayer.classList.toggle('is-combat', isCombat);
     qteLayer.classList.toggle('is-combat-attack-intro', activeMode === 'COMBAT_ATTACK_INTRO');
     qteLayer.classList.toggle('is-combat-attack', activeMode === 'COMBAT_ATTACK');
+    qteLayer.classList.toggle('is-combat-rapid-tap', activeMode === 'COMBAT_RAPID_TAP');
     qteLayer.classList.toggle('is-combat-defense-intro', activeMode === 'COMBAT_DEFENSE_INTRO');
     qteLayer.classList.toggle('is-combat-defense', activeMode === 'COMBAT_DEFENSE');
     qteLayer.classList.toggle('is-combat-defense-success', activeMode === 'COMBAT_DEFENSE_SUCCESS');
@@ -1664,6 +1792,8 @@ export function createUI(onAction) {
     qteLayer.style.setProperty('--monster-cast-duration', GAME_CONFIG.monsterCastDurationMs + 'ms');
     qteLayer.style.setProperty('--combat-attack-duration', GAME_CONFIG.combatPlayerAttackDurationMs + 'ms');
     qteLayer.style.setProperty('--combat-shield-duration', GAME_CONFIG.combatDefenseResultDurationMs + 'ms');
+    qteLayer.style.setProperty('--combat-defense-laser-duration', GAME_CONFIG.combatDefenseLaserDurationMs + 'ms');
+    qteLayer.style.setProperty('--combat-defense-hit-effect-duration', GAME_CONFIG.combatDefenseHitEffectDurationMs + 'ms');
     qteLayer.dataset.debuff = state.activeMonster?.failureDebuff?.type ?? 'NONE';
     if (isMonsterCast && !wasCasting) {
       qteLayer.style.setProperty('--monster-cast-delay', -Math.max(0, state.eventPhaseElapsedMs) + 'ms');
@@ -1755,10 +1885,6 @@ export function createUI(onAction) {
     arena.classList.toggle('debuff-sore', state.debuff?.type === 'SORE');
     arena.classList.toggle('debuff-blur', state.debuff?.type === 'BLUR');
     arena.classList.toggle('debuff-fatigue', state.debuff?.type === 'FATIGUE');
-    const acceptsRhythmInput = (state.mode === 'CLIMBING' || state.mode === 'COMBAT_ATTACK') && state.rhythmRound?.phase === RHYTHM_PHASE.MOVING;
-    hitButton.disabled = !acceptsRhythmInput;
-    hitButton.classList.toggle('is-ready', acceptsRhythmInput);
-    hitButton.setAttribute('aria-label', '依照節奏踩拍');
     pauseButton.disabled = state.mode === 'MENU' || state.mode === 'RESULT';
     pauseButton.textContent = state.mode === 'PAUSED' ? '▶' : 'Ⅱ';
     pauseButton.setAttribute('aria-label', state.mode === 'PAUSED' ? UI_TEXT.resumeButton : UI_TEXT.pauseAria);
@@ -1846,24 +1972,19 @@ export function createUI(onAction) {
     } else if (isCombat && state.activeMonster) {
       if (lastCombatMonsterId !== state.activeMonster.id) {
         lastCombatMonsterId = state.activeMonster.id;
-        lastCombatAttackSerial = state.combatAttackSerial;
-        lastCombatDamageFlashSerial = state.combatDamageFlashSerial;
         lastCombatViewMode = null;
       }
       if (lastCombatViewMode !== activeMode) buildCombatView(state, activeMode);
       qteLayer.hidden = false;
       updateCombatVitals(state);
-      if (isCombatDefense) updateCombatDefenseRound(state.combatDefenseRound);
-      if (isCombatAttack) triggerCombatAttackAnimation(state);
-      triggerCombatDefenseHitFlash(state);
+      if (isCombatDefense || activeMode === 'COMBAT_DEFENSE_SUCCESS' || activeMode === 'COMBAT_DEFENSE_FAILED') {
+        updateCombatDefenseRound(state.combatDefenseRound, state, activeMode);
+      }
     } else {
       qteLayer.hidden = true;
-      qteLayer.classList.remove('is-combat-hit-flash');
       lastQteObject = null;
       lastCombatViewMode = null;
       lastCombatMonsterId = null;
-      lastCombatAttackSerial = state.combatAttackSerial;
-      lastCombatDamageFlashSerial = state.combatDamageFlashSerial;
     }
     showModal(state);
     syncAntiDizzinessSetting(state);
@@ -1883,11 +2004,12 @@ export function createUI(onAction) {
     if (pauseButton.disabled) return;
     onAction(pauseButton.textContent === '▶' ? 'resume' : 'pause');
   });
-  hitButton.addEventListener('pointerdown', (event) => {
+  gameRoot.addEventListener('pointerdown', (event) => {
+    if (event.pointerType === 'mouse' || event.button !== 0) return;
+    if (event.target.closest('button, a, input, select, textarea, [data-action], [data-setting], [data-tile-id], .modal-layer')) return;
     event.preventDefault();
     onAction('rhythm');
-  });
-  hitButton.addEventListener('click', (event) => event.preventDefault());
+  }, { passive: false });
   track.addEventListener('animationend', (event) => {
     if (event.target !== track || !['rhythm-hit-flash', 'rhythm-miss-shake'].includes(event.animationName)) return;
     track.classList.remove('is-rhythm-hit', 'is-rhythm-miss', 'is-feedback-active');
@@ -1906,8 +2028,6 @@ export function createUI(onAction) {
   qteLayer.addEventListener('click', (event) => {
     const tileId = event.target.closest('[data-tile-id]')?.dataset.tileId;
     if (tileId) onAction('qte-letter', tileId);
-    const shieldId = event.target.closest('[data-shield-id]')?.dataset.shieldId;
-    if (shieldId) onAction('combat-shield', shieldId);
   });
   qteLayer.addEventListener('animationend', (event) => {
     if (event.target.matches('.player-attack-projectile') && event.animationName === 'player-attack-flight') {
@@ -1916,9 +2036,6 @@ export function createUI(onAction) {
       monster.classList.remove('is-combat-hit');
       void monster.offsetWidth;
       monster.classList.add('is-combat-hit');
-    }
-    if (event.target === qteLayer && event.animationName === 'combat-red-edge-hit') {
-      qteLayer.classList.remove('is-combat-hit-flash');
     }
   });
 

@@ -16,7 +16,7 @@ const COMBAT_TIMED_PHASES = new Set([
   'COMBAT_ATTACK_INTRO', 'COMBAT_ATTACK_SETTLE', 'COMBAT_DEFENSE_INTRO',
   'COMBAT_DEFENSE_SUCCESS', 'COMBAT_DEFENSE_FAILED', 'COMBAT_VICTORY'
 ]);
-const COMBAT_MODES = new Set(['COMBAT_ATTACK', 'COMBAT_DEFENSE', ...COMBAT_TIMED_PHASES]);
+const COMBAT_MODES = new Set(['COMBAT_ATTACK', 'COMBAT_RAPID_TAP', 'COMBAT_DEFENSE', ...COMBAT_TIMED_PHASES]);
 const PAUSABLE_MODES = new Set(['CLIMBING', ...MONSTER_EVENT_PHASES, 'MONSTER_QTE', ...COMBAT_MODES]);
 
 function freshState(bestTimeMs = null, antiDizzinessMode = ANTI_DIZZINESS_MODE.OFF) {
@@ -36,10 +36,9 @@ function freshState(bestTimeMs = null, antiDizzinessMode = ANTI_DIZZINESS_MODE.O
     monsterHp: null,
     monsterMaxHp: null,
     combatDefenseRound: null,
-    combatAttackSerial: 0,
-    combatAttackEffectRemainingMs: 0,
+    combatRapidTap: null,
     combatPendingDamage: 0,
-    combatDamageFlashSerial: 0,
+    combatDefenseImpactSerial: 0,
     preparedQte: null,
     monsterDebuffApplied: false,
     monsterImpactSerial: 0,
@@ -170,7 +169,14 @@ export function createGame(options = {}) {
     const speedMultiplier = state.debuff?.type === 'SORE'
       ? GAME_CONFIG.debuffs.SORE.speedMultiplier
       : 1;
-    return GAME_CONFIG.rhythmBeatDurationMs / speedMultiplier;
+    return GAME_CONFIG.rhythmBeatDurationMs / (speedMultiplier * GAME_CONFIG.rhythmMoveSpeedMultiplier);
+  }
+
+  function rhythmPrepareDurationForCurrentDebuff() {
+    const speedMultiplier = state.debuff?.type === 'SORE'
+      ? GAME_CONFIG.debuffs.SORE.speedMultiplier
+      : 1;
+    return (GAME_CONFIG.rhythmBeatDurationMs * GAME_CONFIG.rhythmPrepareBeats) / speedMultiplier;
   }
 
   function isBallInZone() {
@@ -179,7 +185,12 @@ export function createGame(options = {}) {
 
   function startNextRhythmRound() {
     state.rhythmRoundSerial += 1;
-    state.rhythmRound = createRhythmRound(random, state.rhythmRoundSerial, rhythmBeatDurationForCurrentDebuff());
+    state.rhythmRound = createRhythmRound(
+      random,
+      state.rhythmRoundSerial,
+      rhythmBeatDurationForCurrentDebuff(),
+      rhythmPrepareDurationForCurrentDebuff()
+    );
   }
 
   function triggerRhythmFeedback(kind) {
@@ -205,9 +216,6 @@ export function createGame(options = {}) {
     if (!round || round.phase !== RHYTHM_PHASE.MOVING) return null;
     let result = null;
     if (state.mode === 'COMBAT_ATTACK') {
-      state.combatAttackSerial += 1;
-      state.combatPendingDamage = GAME_CONFIG.combatDamagePerHit;
-      state.combatAttackEffectRemainingMs = GAME_CONFIG.combatPlayerAttackDurationMs;
       setFeedback(UI_TEXT.combatAttackHit, 'hit');
     } else {
       result = applyHit(state);
@@ -219,13 +227,6 @@ export function createGame(options = {}) {
     return result;
   }
 
-  function advanceCombatAttackEffect(deltaMs) {
-    if (state.mode === 'COMBAT_ATTACK' && state.combatAttackEffectRemainingMs > 0) {
-      state.combatAttackEffectRemainingMs = Math.max(0, state.combatAttackEffectRemainingMs - deltaMs);
-      if (state.combatAttackEffectRemainingMs <= 1e-6) applyPendingCombatDamage();
-    }
-  }
-
   function applyPendingCombatDamage() {
     if (state.combatPendingDamage <= 0) return;
     const currentHp = state.monsterHp ?? state.monsterMaxHp ?? GAME_CONFIG.monsterMaxHp;
@@ -233,40 +234,95 @@ export function createGame(options = {}) {
     state.combatPendingDamage = 0;
   }
 
-  function finishCombatAttackRound() {
-    if (state.combatAttackEffectRemainingMs > 1e-6) {
-      enterMonsterPhase('COMBAT_ATTACK_SETTLE', state.combatAttackEffectRemainingMs);
-    } else {
-      applyPendingCombatDamage();
-      if ((state.monsterHp ?? 0) <= 0) beginCombatVictory();
-      else beginCombatDefenseIntro();
+  function finishCombatAttackRound(round) {
+    state.rhythmRound = null;
+    if (round.resolvedKind === 'hit') beginCombatRapidTap();
+    else beginCombatDefenseIntro();
+  }
+
+  function beginCombatRapidTap() {
+    if (!state.activeMonster || (state.monsterHp ?? 0) <= 0) {
+      beginCombatVictory();
+      return;
     }
+    state.rhythmRound = null;
+    state.combatRapidTap = {
+      prepareRemainingMs: GAME_CONFIG.combatRapidTapPrepareDelayMs,
+      elapsedMs: 0,
+      durationMs: GAME_CONFIG.combatRapidTapDurationMs / GAME_CONFIG.rhythmMoveSpeedMultiplier,
+      tapCount: 0
+    };
+    state.mode = 'COMBAT_RAPID_TAP';
+    setFeedback(UI_TEXT.combatRapidTapPrompt, 'hit');
+  }
+
+  function finishCombatRapidTap() {
+    const rapidTap = state.combatRapidTap;
+    if (!rapidTap || state.mode !== 'COMBAT_RAPID_TAP') return;
+    const damage = GAME_CONFIG.combatRapidTapBaseDamage +
+      rapidTap.tapCount * GAME_CONFIG.combatRapidTapDamageMultiplier;
+    state.combatRapidTap = null;
+    state.combatPendingDamage = damage;
+    setFeedback('DMG ' + damage, 'hit');
+    enterMonsterPhase('COMBAT_ATTACK_SETTLE', GAME_CONFIG.combatPlayerAttackDurationMs);
+  }
+
+  function advanceCombatRapidTap(deltaMs) {
+    const rapidTap = state.combatRapidTap;
+    if (!rapidTap || state.mode !== 'COMBAT_RAPID_TAP') return Math.max(0, deltaMs);
+    let remainingMs = Math.max(0, deltaMs);
+    if (rapidTap.prepareRemainingMs > 0) {
+      const preparedMs = Math.min(remainingMs, rapidTap.prepareRemainingMs);
+      rapidTap.prepareRemainingMs -= preparedMs;
+      remainingMs -= preparedMs;
+    }
+    if (rapidTap.prepareRemainingMs <= 1e-6 && remainingMs > 0) {
+      const movingMs = Math.min(remainingMs, Math.max(0, rapidTap.durationMs - rapidTap.elapsedMs));
+      rapidTap.elapsedMs += movingMs;
+      remainingMs -= movingMs;
+      if (rapidTap.elapsedMs + 1e-6 >= rapidTap.durationMs) {
+        rapidTap.elapsedMs = rapidTap.durationMs;
+        finishCombatRapidTap();
+      }
+    }
+    return remainingMs;
   }
 
   function createCombatDefenseRound() {
     const patterns = GAME_CONFIG.combatDefensePatterns;
     const patternIndex = Math.min(patterns.length - 1, Math.floor(random() * patterns.length));
     const pattern = patterns[Math.max(0, patternIndex)];
-    const shields = pattern.shields.map((shield) => ({ ...shield }));
-    const projectiles = pattern.projectiles.map((projectile) => {
-      const launchTimeMs = Number.isFinite(projectile.launchAtMs)
-        ? projectile.launchAtMs
-        : (projectile.launchIndex ?? 0) * GAME_CONFIG.combatDefenseProjectileIntervalMs;
-      const impactTimeMs = launchTimeMs + GAME_CONFIG.combatDefenseProjectileTravelTimeMs;
+    const shield = { id: 'central', x: 50, y: GAME_CONFIG.combatDefenseShieldY };
+    const flashDurationMs = GAME_CONFIG.combatDefenseVortexFlashDurationMs;
+    const minDelayMs = GAME_CONFIG.combatDefenseInitialRandomDelayMinMs;
+    const maxDelayMs = GAME_CONFIG.combatDefenseInitialRandomDelayMaxMs;
+    const initialRandomDelayMs = minDelayMs + random() * Math.max(0, maxDelayMs - minDelayMs);
+    const attacks = pattern.attackTimesMs.map((attackOffsetMs, index) => {
+      const attackTimeMs = initialRandomDelayMs + attackOffsetMs;
+      const flashStartTimeMs = initialRandomDelayMs + (index === 0 ? 0 : pattern.attackTimesMs[index - 1]);
+      const launchTimeMs = flashStartTimeMs + flashDurationMs;
       return {
-        ...projectile,
+        id: String.fromCharCode(65 + index),
+        flashStartTimeMs,
         launchTimeMs,
-        impactTimeMs,
-        windowStartMs: Math.max(launchTimeMs, impactTimeMs - GAME_CONFIG.combatDefenseHitWindowMs),
-        status: launchTimeMs <= 0 ? 'traveling' : 'scheduled'
+        flightDurationMs: Math.max(0, attackTimeMs - launchTimeMs),
+        attackTimeMs,
+        windowStartMs: attackTimeMs - GAME_CONFIG.combatDefenseHitWindowMs,
+        status: 'scheduled'
       };
     });
     return {
       patternId: pattern.id,
-      shields,
-      projectiles,
+      shield,
+      initialRandomDelayMs,
+      shieldColor: pattern.color,
+      laserColor: pattern.laserColor,
+      vortexFlashTimesMs: attacks.map((attack) => attack.flashStartTimeMs),
+      vortexFlashSerial: 0,
+      attackCount: attacks.length,
+      attacks,
       elapsedMs: 0,
-      durationMs: projectiles.reduce((latest, projectile) => Math.max(latest, projectile.impactTimeMs), 0),
+      durationMs: attacks.reduce((latest, attack) => Math.max(latest, attack.attackTimeMs), 0),
       resolvedCount: 0,
       failed: false
     };
@@ -278,11 +334,12 @@ export function createGame(options = {}) {
       return;
     }
     const round = state.combatDefenseRound;
-    if (!round || round.projectiles.length === 0) {
+    if (!round || round.attacks.length === 0) {
       beginCombatDefenseSuccess();
       return;
     }
     round.elapsedMs = 0;
+    round.vortexFlashSerial = round.initialRandomDelayMs <= 0 ? 1 : 0;
     state.eventPhaseElapsedMs = 0;
     state.eventPhaseDurationMs = 0;
     state.mode = 'COMBAT_DEFENSE';
@@ -292,30 +349,34 @@ export function createGame(options = {}) {
   function advanceCombatDefenseRound(deltaMs) {
     const round = state.combatDefenseRound;
     if (!round) return;
+    const previousElapsedMs = round.elapsedMs;
     const elapsedMs = Math.min(round.durationMs, round.elapsedMs + Math.max(0, deltaMs));
     round.elapsedMs = elapsedMs;
 
-    round.projectiles.forEach((projectile) => {
-      if (projectile.status === 'scheduled' && elapsedMs >= projectile.launchTimeMs) {
-        projectile.status = 'traveling';
+    round.vortexFlashTimesMs.forEach((flashTimeMs) => {
+      if (flashTimeMs > previousElapsedMs && flashTimeMs <= elapsedMs) {
+        round.vortexFlashSerial += 1;
       }
-      if (projectile.status === 'traveling' && elapsedMs >= projectile.windowStartMs) {
-        projectile.status = 'active';
-      }
-      if (elapsedMs + 1e-6 < projectile.impactTimeMs ||
-          !['traveling', 'active', 'defended'].includes(projectile.status)) return;
+    });
 
-      if (projectile.status === 'defended') {
-        projectile.status = 'blocked';
-      } else {
-        projectile.status = 'missed';
-        round.failed = true;
-        state.combatDamageFlashSerial += 1;
+    round.attacks.forEach((attack) => {
+      if (attack.status === 'scheduled' && elapsedMs >= attack.windowStartMs) {
+        attack.status = 'active';
       }
+      if (elapsedMs + 1e-6 < attack.attackTimeMs ||
+          !['active', 'defended'].includes(attack.status)) return;
+
+      if (attack.status === 'defended') {
+        attack.status = 'blocked';
+      } else {
+        attack.status = 'missed';
+        round.failed = true;
+      }
+      state.combatDefenseImpactSerial += 1;
       round.resolvedCount += 1;
     });
 
-    if (round.resolvedCount >= round.projectiles.length) {
+    if (round.resolvedCount >= round.attacks.length) {
       if (round.failed) beginCombatDefenseFailure();
       else beginCombatDefenseSuccess();
     }
@@ -333,7 +394,7 @@ export function createGame(options = {}) {
     if (state.rhythmRound !== round) return;
     round.phase = RHYTHM_PHASE.FINISHED;
     if (state.mode === 'COMBAT_ATTACK') {
-      finishCombatAttackRound();
+      finishCombatAttackRound(round);
       return;
     }
     round.respawnRemainingMs = GAME_CONFIG.rhythmRespawnDelayMs;
@@ -347,7 +408,6 @@ export function createGame(options = {}) {
         const untilLaunchMs = Math.max(0, round.readyDurationMs - round.readyElapsedMs);
         const elapsedMs = Math.min(remainingMs, untilLaunchMs);
         round.readyElapsedMs += elapsedMs;
-        advanceCombatAttackEffect(elapsedMs);
         remainingMs -= elapsedMs;
         if (round.readyElapsedMs + 1e-6 >= round.readyDurationMs) {
           round.readyElapsedMs = round.readyDurationMs;
@@ -373,7 +433,6 @@ export function createGame(options = {}) {
       if (round.phase === RHYTHM_PHASE.RESOLVED) {
         const elapsedMs = Math.min(remainingMs, untilFinishMs);
         round.elapsedMs += elapsedMs;
-        advanceCombatAttackEffect(elapsedMs);
         remainingMs -= elapsedMs;
         if (round.elapsedMs + 1e-6 >= durationMs) {
           round.elapsedMs = durationMs;
@@ -392,24 +451,22 @@ export function createGame(options = {}) {
       const untilMissMs = window ? Math.max(0, window.endMs - round.elapsedMs) : Infinity;
       if (window && untilMissMs < untilFinishMs - 1e-6 && remainingMs > untilMissMs + 1e-6) {
         round.elapsedMs += untilMissMs;
-        advanceCombatAttackEffect(untilMissMs);
         remainingMs -= untilMissMs;
         failRhythmRound();
         continue;
       }
       if (remainingMs < untilFinishMs - 1e-6) {
         round.elapsedMs += remainingMs;
-        advanceCombatAttackEffect(remainingMs);
         remainingMs = 0;
         break;
       }
 
       round.elapsedMs = durationMs;
-      advanceCombatAttackEffect(untilFinishMs);
       remainingMs = Math.max(0, remainingMs - untilFinishMs);
       if (round.phase === RHYTHM_PHASE.MOVING) failRhythmRound();
       finishRhythmRound(round);
     }
+    return remainingMs;
   }
 
   function advanceAutomaticClimb(deltaMs, exactDistance = null) {
@@ -526,7 +583,7 @@ export function createGame(options = {}) {
     state.monsterHp = null;
     state.monsterMaxHp = null;
     state.combatDefenseRound = null;
-    state.combatAttackEffectRemainingMs = 0;
+    state.combatRapidTap = null;
     state.combatPendingDamage = 0;
     state.monsterDebuffApplied = false;
     state.eventPhaseElapsedMs = 0;
@@ -554,7 +611,6 @@ export function createGame(options = {}) {
 
     if (effectResult.debuffCured && state.activeMonster) {
       state.combatDefenseRound = null;
-      state.combatAttackEffectRemainingMs = 0;
       state.combatPendingDamage = 0;
       beginCombatAttackIntro();
       setFeedback(effectResult.message, effectResult.kind);
@@ -566,6 +622,7 @@ export function createGame(options = {}) {
     state.monsterHp = null;
     state.monsterMaxHp = null;
     state.combatDefenseRound = null;
+    state.combatRapidTap = null;
     state.mode = 'CLIMBING';
     startNextRhythmRound();
     setFeedback(effectResult.message, effectResult.kind);
@@ -586,6 +643,7 @@ export function createGame(options = {}) {
     state.monsterHp = null;
     state.monsterMaxHp = null;
     state.combatDefenseRound = null;
+    state.combatRapidTap = null;
     state.monsterDebuffApplied = false;
     state.eventPhaseElapsedMs = 0;
     state.eventPhaseDurationMs = 0;
@@ -603,13 +661,14 @@ export function createGame(options = {}) {
     }
     state.rhythmRound = null;
     state.combatDefenseRound = null;
+    state.combatRapidTap = null;
     enterMonsterPhase('COMBAT_ATTACK_INTRO', GAME_CONFIG.combatRoundIntroDurationMs);
   }
 
   function beginCombatAttack() {
     if (!state.activeMonster || (state.monsterHp ?? 0) <= 0) return;
     state.combatDefenseRound = null;
-    state.combatAttackEffectRemainingMs = 0;
+    state.combatRapidTap = null;
     state.combatPendingDamage = 0;
     state.eventPhaseElapsedMs = 0;
     state.eventPhaseDurationMs = 0;
@@ -623,8 +682,9 @@ export function createGame(options = {}) {
       return;
     }
     state.rhythmRound = null;
+    state.combatRapidTap = null;
     state.combatDefenseRound = createCombatDefenseRound();
-    enterMonsterPhase('COMBAT_DEFENSE_INTRO', GAME_CONFIG.combatRoundIntroDurationMs);
+    enterMonsterPhase('COMBAT_DEFENSE_INTRO', GAME_CONFIG.combatDefenseVortexChargeDurationMs);
   }
 
   function beginCombatDefenseSuccess() {
@@ -641,6 +701,7 @@ export function createGame(options = {}) {
   function beginCombatVictory() {
     state.combatDefenseRound = null;
     state.rhythmRound = null;
+    state.combatRapidTap = null;
     enterMonsterPhase('COMBAT_VICTORY', GAME_CONFIG.combatMonsterDeathDurationMs);
     setFeedback(UI_TEXT.combatMonsterDefeated, 'success');
   }
@@ -652,7 +713,7 @@ export function createGame(options = {}) {
     state.monsterHp = null;
     state.monsterMaxHp = null;
     state.combatDefenseRound = null;
-    state.combatAttackEffectRemainingMs = 0;
+    state.combatRapidTap = null;
     state.combatPendingDamage = 0;
     state.eventPhaseElapsedMs = 0;
     state.eventPhaseDurationMs = 0;
@@ -684,7 +745,7 @@ export function createGame(options = {}) {
     state.monsterMaxHp = Math.max(1, state.activeMonster.maxHp ?? GAME_CONFIG.monsterMaxHp);
     state.monsterHp = Math.min(state.monsterMaxHp, Math.max(0, state.activeMonster.initialHp ?? state.monsterMaxHp));
     state.combatDefenseRound = null;
-    state.combatAttackEffectRemainingMs = 0;
+    state.combatRapidTap = null;
     state.combatPendingDamage = 0;
     state.activeQte = null;
     state.preparedQte = createQte(
@@ -785,15 +846,37 @@ export function createGame(options = {}) {
     notify();
   }
 
+  function tryDefendCentralShield() {
+    if (state.mode !== 'COMBAT_DEFENSE' || !state.combatDefenseRound) return { status: 'ignored' };
+    const nowMs = state.combatDefenseRound.elapsedMs;
+    const attack = state.combatDefenseRound.attacks.find((shot) => shot.status === 'active' &&
+      nowMs >= shot.windowStartMs && nowMs < shot.attackTimeMs);
+    if (!attack) return { status: 'ignored' };
+    attack.status = 'defended';
+    notify();
+    return { status: 'defended', attackId: attack.id };
+  }
+
   function pressRhythm(timestamp = globalThis.performance?.now?.()) {
-    if (state.mode !== 'CLIMBING' && state.mode !== 'COMBAT_ATTACK') return { status: 'ignored' };
-    const roundBeforeUpdate = state.rhythmRound;
     const modeBeforeUpdate = state.mode;
+    const roundBeforeUpdate = state.rhythmRound;
+    const rapidTapBeforeUpdate = state.combatRapidTap;
     const previousFeedbackSerial = state.rhythmFeedbackSerial;
-    if (previousFrameTime !== null && Number.isFinite(timestamp)) {
-      update(timestamp);
+    if (previousFrameTime !== null && Number.isFinite(timestamp)) update(timestamp);
+    if (state.mode !== modeBeforeUpdate) return { status: 'ignored' };
+
+    if (modeBeforeUpdate === 'COMBAT_DEFENSE') return tryDefendCentralShield();
+    if (modeBeforeUpdate === 'COMBAT_RAPID_TAP') {
+      const rapidTap = state.combatRapidTap;
+      if (!rapidTap || rapidTap !== rapidTapBeforeUpdate || rapidTap.prepareRemainingMs > 1e-6 ||
+          rapidTap.elapsedMs >= rapidTap.durationMs) return { status: 'ignored' };
+      rapidTap.tapCount += 1;
+      state.rhythmTapSerial = ++rhythmTapSerial;
+      setFeedback('TAP × ' + rapidTap.tapCount, 'hit');
+      notify();
+      return { status: 'tapped', tapCount: rapidTap.tapCount };
     }
-    if (state.mode !== modeBeforeUpdate || (state.mode !== 'CLIMBING' && state.mode !== 'COMBAT_ATTACK')) return { status: 'ignored' };
+    if (modeBeforeUpdate !== 'CLIMBING' && modeBeforeUpdate !== 'COMBAT_ATTACK') return { status: 'ignored' };
     if (state.rhythmFeedbackSerial !== previousFeedbackSerial && state.rhythmFeedbackKind === 'miss') {
       return { status: 'missed-window' };
     }
@@ -833,21 +916,10 @@ export function createGame(options = {}) {
     return result;
   }
 
-  function pressCombatShield(shieldId, timestamp = globalThis.performance?.now?.()) {
-    if (state.mode !== 'COMBAT_DEFENSE') return { status: 'ignored' };
+  function pressCombatShield(shieldId = 'central', timestamp = globalThis.performance?.now?.()) {
+    if (state.mode !== 'COMBAT_DEFENSE' || shieldId !== 'central') return { status: 'ignored' };
     if (previousFrameTime !== null && Number.isFinite(timestamp)) update(timestamp);
-    if (state.mode !== 'COMBAT_DEFENSE' || !state.combatDefenseRound) return { status: 'ignored' };
-
-    const nowMs = state.combatDefenseRound.elapsedMs;
-    const projectile = state.combatDefenseRound.projectiles
-      .filter((shot) => shot.targetShieldId === shieldId && shot.status === 'active' &&
-        nowMs >= shot.windowStartMs && nowMs < shot.impactTimeMs)
-      .sort((first, second) => first.impactTimeMs - second.impactTimeMs)[0];
-    if (!projectile) return { status: 'ignored' };
-
-    projectile.status = 'defended';
-    notify();
-    return { status: 'defended', projectileId: projectile.id };
+    return tryDefendCentralShield();
   }
 
   function pause(timestamp = globalThis.performance?.now?.()) {
@@ -941,9 +1013,18 @@ export function createGame(options = {}) {
         if (state.mode !== 'COMBAT_DEFENSE') continue;
         break;
       }
+      if (state.mode === 'COMBAT_RAPID_TAP') {
+        const beforeMs = remainingMs;
+        remainingMs = advanceCombatRapidTap(remainingMs);
+        state.timerMs += beforeMs - remainingMs;
+        if (state.mode !== 'COMBAT_RAPID_TAP' && remainingMs > 1e-6) continue;
+        break;
+      }
       if (state.mode === 'COMBAT_ATTACK') {
-        state.timerMs += remainingMs;
-        advanceRhythm(remainingMs);
+        const beforeMs = remainingMs;
+        remainingMs = advanceRhythm(remainingMs);
+        state.timerMs += beforeMs - remainingMs;
+        if (state.mode !== 'COMBAT_ATTACK' && remainingMs > 1e-6) continue;
         remainingMs = 0;
         continue;
       }
