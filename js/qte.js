@@ -40,7 +40,8 @@ export function clickQteTile(qte, tileId) {
   if (!tile || !tile.visible) return { status: 'ignored' };
 
   const nextInput = qte.input + tile.letter;
-  const candidates = qte.monster.solutions.filter((solution) => solution.word.startsWith(nextInput));
+  const solutions = qte.solutions ?? qte.monster?.solutions ?? [];
+  const candidates = solutions.filter((solution) => solution.word.startsWith(nextInput));
   if (candidates.length === 0) {
     qte.input = '';
     qte.tiles.forEach((candidate) => { candidate.visible = true; });

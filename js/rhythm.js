@@ -1,5 +1,12 @@
 import { GAME_CONFIG, RHYTHM_TYPES } from './config.js';
 
+export const RHYTHM_PHASE = Object.freeze({
+  SPAWN_READY: 'SPAWN_READY',
+  MOVING: 'MOVING',
+  RESOLVED: 'RESOLVED',
+  FINISHED: 'FINISHED'
+});
+
 export function createRhythmRound(random = Math.random, id = 0, beatDurationMs = GAME_CONFIG.rhythmBeatDurationMs) {
   const typeIds = Object.keys(RHYTHM_TYPES);
   const pickedIndex = Math.min(typeIds.length - 1, Math.floor(random() * typeIds.length));
@@ -13,8 +20,14 @@ export function createRhythmRound(random = Math.random, id = 0, beatDurationMs =
     totalBeats: type.totalBeats,
     hitBeats: [...type.hitBeats],
     beatDurationMs,
+    readyDurationMs: beatDurationMs * GAME_CONFIG.rhythmPrepareBeats,
+    readyElapsedMs: 0,
     elapsedMs: 0,
-    inputIndex: 0
+    respawnRemainingMs: 0,
+    inputIndex: 0,
+    phase: RHYTHM_PHASE.SPAWN_READY,
+    resolvedKind: null,
+    launchSerial: null
   };
 }
 
@@ -23,9 +36,8 @@ export function rhythmRoundDurationMs(round) {
 }
 
 export function rhythmRoundProgress(round) {
-  if (!round) return 0;
-  const movingElapsed = Math.max(0, round.elapsedMs - GAME_CONFIG.rhythmStartDelayMs);
-  return Math.max(0, Math.min(1, movingElapsed / rhythmRoundDurationMs(round)));
+  if (!round || round.phase === RHYTHM_PHASE.SPAWN_READY) return 0;
+  return Math.max(0, Math.min(1, round.elapsedMs / rhythmRoundDurationMs(round)));
 }
 
 export function rhythmHitWindows(round, widthRatio) {
@@ -34,17 +46,23 @@ export function rhythmHitWindows(round, widthRatio) {
     beat,
     center: beat / round.totalBeats,
     width: widthRatio / round.totalBeats,
-    status: index < round.inputIndex ? 'complete' : index === round.inputIndex ? 'current' : 'upcoming'
+    status: index < round.inputIndex
+      ? 'complete'
+      : round.phase === RHYTHM_PHASE.MOVING && index === round.inputIndex
+        ? 'current'
+        : round.phase === RHYTHM_PHASE.SPAWN_READY
+          ? 'locked'
+          : 'upcoming'
   }));
 }
 
 export function currentRhythmWindow(round, widthRatio) {
-  if (!round) return null;
+  if (!round || round.phase !== RHYTHM_PHASE.MOVING) return null;
   const beat = round.hitBeats[round.inputIndex];
   if (beat === undefined) return null;
   const beatDurationMs = round.beatDurationMs ?? GAME_CONFIG.rhythmBeatDurationMs;
   const halfWindowMs = beatDurationMs * widthRatio / 2;
-  const centerMs = GAME_CONFIG.rhythmStartDelayMs + beat * beatDurationMs;
+  const centerMs = beat * beatDurationMs;
   return {
     beat,
     startMs: centerMs - halfWindowMs,

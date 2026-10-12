@@ -7,6 +7,7 @@ const ui = createUI((action, payload) => {
   if (action === 'start') game.start();
   else if (action === 'rhythm') game.pressRhythm();
   else if (action === 'qte-letter') game.pressQteLetter(payload);
+  else if (action === 'combat-shield') game.pressCombatShield(payload);
   else if (action === 'pause') game.pause();
   else if (action === 'resume') game.resume();
   else if (action === 'set-anti-dizziness-mode') game.setAntiDizzinessMode(payload ? ANTI_DIZZINESS_MODE.ON : ANTI_DIZZINESS_MODE.OFF);
@@ -26,7 +27,12 @@ document.addEventListener('keydown', (event) => {
 
 function pauseForFocusLoss() {
   const mode = game.getState().mode;
-  if (mode === 'CLIMBING' || mode === 'MONSTER_QTE') game.pause();
+  if ([
+    'CLIMBING', 'EVENT_WARNING', 'MONSTER_ENTRANCE', 'MONSTER_CAST', 'MONSTER_IMPACT',
+    'ATTACK_TO_DEBUFF_DELAY', 'DEBUFF_REVEAL', 'DEBUFF_TO_ANSWER_DELAY', 'ANSWER_PREVIEW', 'MONSTER_QTE',
+    'COMBAT_ATTACK_INTRO', 'COMBAT_ATTACK', 'COMBAT_ATTACK_SETTLE', 'COMBAT_DEFENSE_INTRO',
+    'COMBAT_DEFENSE', 'COMBAT_DEFENSE_SUCCESS', 'COMBAT_DEFENSE_FAILED', 'COMBAT_VICTORY'
+  ].includes(mode)) game.pause();
 }
 window.addEventListener('blur', pauseForFocusLoss);
 document.addEventListener('visibilitychange', () => {

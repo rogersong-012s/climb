@@ -2,11 +2,22 @@ import { ANTI_DIZZINESS_MODE, GAME_CONFIG, UI_TEXT } from './config.js';
 import { hitZoneWidthForCombo } from './combo.js';
 import { applyHit, applyMiss, knockBack } from './climbing.js';
 import { scheduleMonsterEvents, firstCrossedMonsterEvent } from './events.js';
-import { applySolutionEffect, consumeDebuffDistance } from './effects.js';
+import { applyDebuff, applySolutionEffect, consumeDebuffDistance } from './effects.js';
 import { chooseMonster } from './monsters.js';
 import { clickQteTile, createQte } from './qte.js';
-import { createRhythmRound, currentRhythmWindow, isCurrentRhythmHit, rhythmHitWindows, rhythmRoundProgress } from './rhythm.js';
+import { createRhythmRound, currentRhythmWindow, isCurrentRhythmHit, rhythmHitWindows, rhythmRoundDurationMs, rhythmRoundProgress, RHYTHM_PHASE } from './rhythm.js';
 import { stairNodeAt } from './stairs.js';
+
+const MONSTER_EVENT_PHASES = new Set([
+  'EVENT_WARNING', 'MONSTER_ENTRANCE', 'MONSTER_CAST', 'MONSTER_IMPACT',
+  'ATTACK_TO_DEBUFF_DELAY', 'DEBUFF_REVEAL', 'DEBUFF_TO_ANSWER_DELAY', 'ANSWER_PREVIEW'
+]);
+const COMBAT_TIMED_PHASES = new Set([
+  'COMBAT_ATTACK_INTRO', 'COMBAT_ATTACK_SETTLE', 'COMBAT_DEFENSE_INTRO',
+  'COMBAT_DEFENSE_SUCCESS', 'COMBAT_DEFENSE_FAILED', 'COMBAT_VICTORY'
+]);
+const COMBAT_MODES = new Set(['COMBAT_ATTACK', 'COMBAT_DEFENSE', ...COMBAT_TIMED_PHASES]);
+const PAUSABLE_MODES = new Set(['CLIMBING', ...MONSTER_EVENT_PHASES, 'MONSTER_QTE', ...COMBAT_MODES]);
 
 function freshState(bestTimeMs = null, antiDizzinessMode = ANTI_DIZZINESS_MODE.OFF) {
   const stairNode = stairNodeAt(GAME_CONFIG.startFloor);
@@ -20,6 +31,21 @@ function freshState(bestTimeMs = null, antiDizzinessMode = ANTI_DIZZINESS_MODE.O
     climbSpeed: GAME_CONFIG.initialClimbSpeed,
     stepPhase: 0,
     pendingMonsterEvent: null,
+    activeMonsterEvent: null,
+    activeMonster: null,
+    monsterHp: null,
+    monsterMaxHp: null,
+    combatDefenseRound: null,
+    combatAttackSerial: 0,
+    combatAttackEffectRemainingMs: 0,
+    combatPendingDamage: 0,
+    combatDamageFlashSerial: 0,
+    preparedQte: null,
+    monsterDebuffApplied: false,
+    monsterImpactSerial: 0,
+    debuffCureSerial: 0,
+    eventPhaseElapsedMs: 0,
+    eventPhaseDurationMs: 0,
     isLandingPaused: false,
     landingPauseDurationMs: 0,
     landingPauseRemainingMs: 0,
@@ -38,6 +64,7 @@ function freshState(bestTimeMs = null, antiDizzinessMode = ANTI_DIZZINESS_MODE.O
     rhythmTapSerial: 0,
     rhythmFeedbackSerial: 0,
     rhythmFeedbackKind: null,
+    rhythmLaunchSerial: 0,
     timerMs: 0,
     monsterEvents: [],
     activeQte: null,
@@ -122,6 +149,7 @@ export function createGame(options = {}) {
   let previousFrameTime = null;
   let rhythmTapSerial = 0;
   let rhythmFeedbackSerial = 0;
+  let rhythmLaunchSerial = 0;
   const listeners = new Set();
 
   function notify() {
@@ -133,6 +161,8 @@ export function createGame(options = {}) {
   }
 
   function currentHitZoneWidth() {
+    const effectiveMode = state.mode === 'PAUSED' ? state.resumeMode : state.mode;
+    if (effectiveMode === 'COMBAT_ATTACK') return hitZoneWidthForCombo(0, null);
     return hitZoneWidthForCombo(state.combo, state.debuff?.type ?? null);
   }
 
@@ -158,38 +188,227 @@ export function createGame(options = {}) {
   }
 
   function failRhythmRound() {
-    if (!state.rhythmRound) return;
-    applyMiss(state);
-    setFeedback(UI_TEXT.miss, 'miss');
+    const round = state.rhythmRound;
+    if (!round || round.phase !== RHYTHM_PHASE.MOVING) return;
+    if (state.mode === 'COMBAT_ATTACK') setFeedback(UI_TEXT.combatAttackMiss, 'miss');
+    else {
+      applyMiss(state);
+      setFeedback(UI_TEXT.miss, 'miss');
+    }
+    round.phase = RHYTHM_PHASE.RESOLVED;
+    round.resolvedKind = 'miss';
     triggerRhythmFeedback('miss');
-    startNextRhythmRound();
   }
 
   function completeRhythmRound() {
-    const result = applyHit(state);
-    setFeedback(UI_TEXT.hit, 'hit');
+    const round = state.rhythmRound;
+    if (!round || round.phase !== RHYTHM_PHASE.MOVING) return null;
+    let result = null;
+    if (state.mode === 'COMBAT_ATTACK') {
+      state.combatAttackSerial += 1;
+      state.combatPendingDamage = GAME_CONFIG.combatDamagePerHit;
+      state.combatAttackEffectRemainingMs = GAME_CONFIG.combatPlayerAttackDurationMs;
+      setFeedback(UI_TEXT.combatAttackHit, 'hit');
+    } else {
+      result = applyHit(state);
+      setFeedback(UI_TEXT.hit, 'hit');
+    }
+    round.phase = RHYTHM_PHASE.RESOLVED;
+    round.resolvedKind = 'hit';
     triggerRhythmFeedback('hit');
-    startNextRhythmRound();
     return result;
+  }
+
+  function advanceCombatAttackEffect(deltaMs) {
+    if (state.mode === 'COMBAT_ATTACK' && state.combatAttackEffectRemainingMs > 0) {
+      state.combatAttackEffectRemainingMs = Math.max(0, state.combatAttackEffectRemainingMs - deltaMs);
+      if (state.combatAttackEffectRemainingMs <= 1e-6) applyPendingCombatDamage();
+    }
+  }
+
+  function applyPendingCombatDamage() {
+    if (state.combatPendingDamage <= 0) return;
+    const currentHp = state.monsterHp ?? state.monsterMaxHp ?? GAME_CONFIG.monsterMaxHp;
+    state.monsterHp = Math.max(0, currentHp - state.combatPendingDamage);
+    state.combatPendingDamage = 0;
+  }
+
+  function finishCombatAttackRound() {
+    if (state.combatAttackEffectRemainingMs > 1e-6) {
+      enterMonsterPhase('COMBAT_ATTACK_SETTLE', state.combatAttackEffectRemainingMs);
+    } else {
+      applyPendingCombatDamage();
+      if ((state.monsterHp ?? 0) <= 0) beginCombatVictory();
+      else beginCombatDefenseIntro();
+    }
+  }
+
+  function createCombatDefenseRound() {
+    const patterns = GAME_CONFIG.combatDefensePatterns;
+    const patternIndex = Math.min(patterns.length - 1, Math.floor(random() * patterns.length));
+    const pattern = patterns[Math.max(0, patternIndex)];
+    const shields = pattern.shields.map((shield) => ({ ...shield }));
+    const projectiles = pattern.projectiles.map((projectile) => {
+      const launchTimeMs = Number.isFinite(projectile.launchAtMs)
+        ? projectile.launchAtMs
+        : (projectile.launchIndex ?? 0) * GAME_CONFIG.combatDefenseProjectileIntervalMs;
+      const impactTimeMs = launchTimeMs + GAME_CONFIG.combatDefenseProjectileTravelTimeMs;
+      return {
+        ...projectile,
+        launchTimeMs,
+        impactTimeMs,
+        windowStartMs: Math.max(launchTimeMs, impactTimeMs - GAME_CONFIG.combatDefenseHitWindowMs),
+        status: launchTimeMs <= 0 ? 'traveling' : 'scheduled'
+      };
+    });
+    return {
+      patternId: pattern.id,
+      shields,
+      projectiles,
+      elapsedMs: 0,
+      durationMs: projectiles.reduce((latest, projectile) => Math.max(latest, projectile.impactTimeMs), 0),
+      resolvedCount: 0,
+      failed: false
+    };
+  }
+
+  function beginCombatDefense() {
+    if (!state.activeMonster || (state.monsterHp ?? 0) <= 0) {
+      beginCombatVictory();
+      return;
+    }
+    const round = state.combatDefenseRound;
+    if (!round || round.projectiles.length === 0) {
+      beginCombatDefenseSuccess();
+      return;
+    }
+    round.elapsedMs = 0;
+    state.eventPhaseElapsedMs = 0;
+    state.eventPhaseDurationMs = 0;
+    state.mode = 'COMBAT_DEFENSE';
+    setFeedback(UI_TEXT.combatDefensePrompt, 'neutral');
+  }
+
+  function advanceCombatDefenseRound(deltaMs) {
+    const round = state.combatDefenseRound;
+    if (!round) return;
+    const elapsedMs = Math.min(round.durationMs, round.elapsedMs + Math.max(0, deltaMs));
+    round.elapsedMs = elapsedMs;
+
+    round.projectiles.forEach((projectile) => {
+      if (projectile.status === 'scheduled' && elapsedMs >= projectile.launchTimeMs) {
+        projectile.status = 'traveling';
+      }
+      if (projectile.status === 'traveling' && elapsedMs >= projectile.windowStartMs) {
+        projectile.status = 'active';
+      }
+      if (elapsedMs + 1e-6 < projectile.impactTimeMs ||
+          !['traveling', 'active', 'defended'].includes(projectile.status)) return;
+
+      if (projectile.status === 'defended') {
+        projectile.status = 'blocked';
+      } else {
+        projectile.status = 'missed';
+        round.failed = true;
+        state.combatDamageFlashSerial += 1;
+      }
+      round.resolvedCount += 1;
+    });
+
+    if (round.resolvedCount >= round.projectiles.length) {
+      if (round.failed) beginCombatDefenseFailure();
+      else beginCombatDefenseSuccess();
+    }
+  }
+
+  function beginRhythmMovement(round) {
+    if (state.rhythmRound !== round || round.phase !== RHYTHM_PHASE.SPAWN_READY) return;
+    round.phase = RHYTHM_PHASE.MOVING;
+    round.readyElapsedMs = round.readyDurationMs;
+    round.launchSerial = ++rhythmLaunchSerial;
+    state.rhythmLaunchSerial = rhythmLaunchSerial;
+  }
+
+  function finishRhythmRound(round) {
+    if (state.rhythmRound !== round) return;
+    round.phase = RHYTHM_PHASE.FINISHED;
+    if (state.mode === 'COMBAT_ATTACK') {
+      finishCombatAttackRound();
+      return;
+    }
+    round.respawnRemainingMs = GAME_CONFIG.rhythmRespawnDelayMs;
   }
 
   function advanceRhythm(deltaMs) {
     let remainingMs = Math.max(0, deltaMs);
-    while (remainingMs > 1e-6 && state.mode === 'CLIMBING' && state.rhythmRound) {
-      const window = currentRhythmWindow(state.rhythmRound, currentHitZoneWidth());
-      if (!window) {
-        startNextRhythmRound();
+    while (remainingMs > 1e-6 && (state.mode === 'CLIMBING' || state.mode === 'COMBAT_ATTACK') && state.rhythmRound) {
+      const round = state.rhythmRound;
+      if (round.phase === RHYTHM_PHASE.SPAWN_READY) {
+        const untilLaunchMs = Math.max(0, round.readyDurationMs - round.readyElapsedMs);
+        const elapsedMs = Math.min(remainingMs, untilLaunchMs);
+        round.readyElapsedMs += elapsedMs;
+        advanceCombatAttackEffect(elapsedMs);
+        remainingMs -= elapsedMs;
+        if (round.readyElapsedMs + 1e-6 >= round.readyDurationMs) {
+          round.readyElapsedMs = round.readyDurationMs;
+          beginRhythmMovement(round);
+          continue;
+        }
+        break;
+      }
+
+      if (round.phase === RHYTHM_PHASE.FINISHED) {
+        const elapsedMs = Math.min(remainingMs, round.respawnRemainingMs);
+        round.respawnRemainingMs = Math.max(0, round.respawnRemainingMs - elapsedMs);
+        remainingMs -= elapsedMs;
+        if (round.respawnRemainingMs <= 1e-6) {
+          startNextRhythmRound();
+          continue;
+        }
+        break;
+      }
+
+      const durationMs = rhythmRoundDurationMs(round);
+      const untilFinishMs = Math.max(0, durationMs - round.elapsedMs);
+      if (round.phase === RHYTHM_PHASE.RESOLVED) {
+        const elapsedMs = Math.min(remainingMs, untilFinishMs);
+        round.elapsedMs += elapsedMs;
+        advanceCombatAttackEffect(elapsedMs);
+        remainingMs -= elapsedMs;
+        if (round.elapsedMs + 1e-6 >= durationMs) {
+          round.elapsedMs = durationMs;
+          finishRhythmRound(round);
+          continue;
+        }
+        break;
+      }
+
+      if (round.phase !== RHYTHM_PHASE.MOVING) {
+        finishRhythmRound(round);
         continue;
       }
-      const untilMissMs = Math.max(0, window.endMs - state.rhythmRound.elapsedMs);
-      if (remainingMs <= untilMissMs) {
-        state.rhythmRound.elapsedMs += remainingMs;
+
+      const window = currentRhythmWindow(round, currentHitZoneWidth());
+      const untilMissMs = window ? Math.max(0, window.endMs - round.elapsedMs) : Infinity;
+      if (window && untilMissMs < untilFinishMs - 1e-6 && remainingMs > untilMissMs + 1e-6) {
+        round.elapsedMs += untilMissMs;
+        advanceCombatAttackEffect(untilMissMs);
+        remainingMs -= untilMissMs;
+        failRhythmRound();
+        continue;
+      }
+      if (remainingMs < untilFinishMs - 1e-6) {
+        round.elapsedMs += remainingMs;
+        advanceCombatAttackEffect(remainingMs);
         remainingMs = 0;
         break;
       }
-      state.rhythmRound.elapsedMs += untilMissMs;
-      remainingMs -= untilMissMs;
-      failRhythmRound();
+
+      round.elapsedMs = durationMs;
+      advanceCombatAttackEffect(untilFinishMs);
+      remainingMs = Math.max(0, remainingMs - untilFinishMs);
+      if (round.phase === RHYTHM_PHASE.MOVING) failRhythmRound();
+      finishRhythmRound(round);
     }
   }
 
@@ -301,6 +520,17 @@ export function createGame(options = {}) {
     state.progress = GAME_CONFIG.maxFloor;
     state.mode = 'RESULT';
     state.activeQte = null;
+    state.preparedQte = null;
+    state.activeMonster = null;
+    state.activeMonsterEvent = null;
+    state.monsterHp = null;
+    state.monsterMaxHp = null;
+    state.combatDefenseRound = null;
+    state.combatAttackEffectRemainingMs = 0;
+    state.combatPendingDamage = 0;
+    state.monsterDebuffApplied = false;
+    state.eventPhaseElapsedMs = 0;
+    state.eventPhaseDurationMs = 0;
     state.feedback = null;
     if (state.bestTimeMs === null || state.timerMs < state.bestTimeMs) {
       state.bestTimeMs = state.timerMs;
@@ -311,11 +541,32 @@ export function createGame(options = {}) {
 
   function resolveSolution(solution) {
     const effectResult = applySolutionEffect(state, solution);
+    if (effectResult.debuffCured) state.debuffCureSerial += 1;
     state.stats.qteWins += 1;
     state.activeQte = null;
-    state.mode = 'CLIMBING';
+    state.preparedQte = null;
+    state.monsterDebuffApplied = false;
+    state.eventPhaseElapsedMs = 0;
+    state.eventPhaseDurationMs = 0;
     state.rhythmTapSerial = rhythmTapSerial;
     state.rhythmFeedbackSerial = rhythmFeedbackSerial;
+    state.rhythmLaunchSerial = rhythmLaunchSerial;
+
+    if (effectResult.debuffCured && state.activeMonster) {
+      state.combatDefenseRound = null;
+      state.combatAttackEffectRemainingMs = 0;
+      state.combatPendingDamage = 0;
+      beginCombatAttackIntro();
+      setFeedback(effectResult.message, effectResult.kind);
+      return;
+    }
+
+    state.activeMonster = null;
+    state.activeMonsterEvent = null;
+    state.monsterHp = null;
+    state.monsterMaxHp = null;
+    state.combatDefenseRound = null;
+    state.mode = 'CLIMBING';
     startNextRhythmRound();
     setFeedback(effectResult.message, effectResult.kind);
   }
@@ -324,9 +575,20 @@ export function createGame(options = {}) {
     const monster = state.activeQte?.monster;
     if (!monster) return;
     state.stats.qteLosses += 1;
-    knockBack(state, monster.failureKnockback, monster.failureDebuff);
+    // The monster's cast already applied its debuff before the QTE preview.
+    // Keep the existing failure knockback/combo rules without applying it twice.
+    knockBack(state, monster.failureKnockback, state.monsterDebuffApplied ? null : monster.failureDebuff);
     syncStairNode(state.progress);
     state.activeQte = null;
+    state.preparedQte = null;
+    state.activeMonster = null;
+    state.activeMonsterEvent = null;
+    state.monsterHp = null;
+    state.monsterMaxHp = null;
+    state.combatDefenseRound = null;
+    state.monsterDebuffApplied = false;
+    state.eventPhaseElapsedMs = 0;
+    state.eventPhaseDurationMs = 0;
     state.mode = 'CLIMBING';
     startNextRhythmRound();
     const debuffName = monster.failureDebuff ? GAME_CONFIG.debuffs[monster.failureDebuff.type]?.name : '';
@@ -334,11 +596,178 @@ export function createGame(options = {}) {
     setFeedback(UI_TEXT.knockback.replace('{floors}', String(monster.failureKnockback)) + detail, 'danger');
   }
 
+  function beginCombatAttackIntro() {
+    if (!state.activeMonster || (state.monsterHp ?? 0) <= 0) {
+      beginCombatVictory();
+      return;
+    }
+    state.rhythmRound = null;
+    state.combatDefenseRound = null;
+    enterMonsterPhase('COMBAT_ATTACK_INTRO', GAME_CONFIG.combatRoundIntroDurationMs);
+  }
+
+  function beginCombatAttack() {
+    if (!state.activeMonster || (state.monsterHp ?? 0) <= 0) return;
+    state.combatDefenseRound = null;
+    state.combatAttackEffectRemainingMs = 0;
+    state.combatPendingDamage = 0;
+    state.eventPhaseElapsedMs = 0;
+    state.eventPhaseDurationMs = 0;
+    state.mode = 'COMBAT_ATTACK';
+    startNextRhythmRound();
+  }
+
+  function beginCombatDefenseIntro() {
+    if (!state.activeMonster || (state.monsterHp ?? 0) <= 0) {
+      beginCombatVictory();
+      return;
+    }
+    state.rhythmRound = null;
+    state.combatDefenseRound = createCombatDefenseRound();
+    enterMonsterPhase('COMBAT_DEFENSE_INTRO', GAME_CONFIG.combatRoundIntroDurationMs);
+  }
+
+  function beginCombatDefenseSuccess() {
+    enterMonsterPhase('COMBAT_DEFENSE_SUCCESS', GAME_CONFIG.combatDefenseResultDurationMs);
+    setFeedback(UI_TEXT.combatDefenseSuccess, 'success');
+  }
+
+  function beginCombatDefenseFailure() {
+    if (!state.activeMonster) return;
+    enterMonsterPhase('COMBAT_DEFENSE_FAILED', GAME_CONFIG.combatDefenseResultDurationMs);
+    setFeedback(UI_TEXT.combatDefenseFailure, 'neutral');
+  }
+
+  function beginCombatVictory() {
+    state.combatDefenseRound = null;
+    state.rhythmRound = null;
+    enterMonsterPhase('COMBAT_VICTORY', GAME_CONFIG.combatMonsterDeathDurationMs);
+    setFeedback(UI_TEXT.combatMonsterDefeated, 'success');
+  }
+
+  function finishMonsterCombat() {
+    if (state.activeMonsterEvent) state.activeMonsterEvent.defeated = true;
+    state.activeMonster = null;
+    state.activeMonsterEvent = null;
+    state.monsterHp = null;
+    state.monsterMaxHp = null;
+    state.combatDefenseRound = null;
+    state.combatAttackEffectRemainingMs = 0;
+    state.combatPendingDamage = 0;
+    state.eventPhaseElapsedMs = 0;
+    state.eventPhaseDurationMs = 0;
+    state.mode = 'CLIMBING';
+    startNextRhythmRound();
+    setFeedback(UI_TEXT.combatMonsterDefeated, 'success');
+  }
+
+  function advanceCombatPhase() {
+    switch (state.mode) {
+      case 'COMBAT_ATTACK_INTRO': beginCombatAttack(); break;
+      case 'COMBAT_ATTACK_SETTLE':
+        applyPendingCombatDamage();
+        if ((state.monsterHp ?? 0) <= 0) beginCombatVictory();
+        else beginCombatDefenseIntro();
+        break;
+      case 'COMBAT_DEFENSE_INTRO': beginCombatDefense(); break;
+      case 'COMBAT_DEFENSE_SUCCESS':
+      case 'COMBAT_DEFENSE_FAILED': beginCombatAttackIntro(); break;
+      case 'COMBAT_VICTORY': finishMonsterCombat(); break;
+      default: break;
+    }
+  }
+
   function beginMonsterEvent(event) {
     event.triggered = true;
-    const monster = chooseMonster(random, options.monsters);
-    state.activeQte = createQte(monster, random, monster.qteDurationMs ?? GAME_CONFIG.monsterQteDurationMs);
+    state.activeMonsterEvent = event;
+    state.activeMonster = chooseMonster(random, options.monsters);
+    state.monsterMaxHp = Math.max(1, state.activeMonster.maxHp ?? GAME_CONFIG.monsterMaxHp);
+    state.monsterHp = Math.min(state.monsterMaxHp, Math.max(0, state.activeMonster.initialHp ?? state.monsterMaxHp));
+    state.combatDefenseRound = null;
+    state.combatAttackEffectRemainingMs = 0;
+    state.combatPendingDamage = 0;
+    state.activeQte = null;
+    state.preparedQte = createQte(
+      state.activeMonster,
+      random,
+      state.activeMonster.qteDurationMs ?? GAME_CONFIG.monsterQteDurationMs
+    );
+    state.preparedQte.monsterHp = state.monsterHp;
+    state.preparedQte.monsterMaxHp = state.monsterMaxHp;
+    state.monsterDebuffApplied = false;
     state.rhythmRound = null;
+    state.eventPhaseElapsedMs = 0;
+    state.eventPhaseDurationMs = GAME_CONFIG.monsterWarningFlashCount * GAME_CONFIG.monsterWarningFlashDurationMs +
+      Math.max(0, GAME_CONFIG.monsterWarningFlashCount - 1) * GAME_CONFIG.monsterWarningGapDurationMs;
+    state.mode = 'EVENT_WARNING';
+  }
+
+  function beginMonsterEntrance() {
+    if (!state.activeMonster) return;
+    enterMonsterPhase('MONSTER_ENTRANCE', GAME_CONFIG.monsterEntranceDurationMs);
+  }
+
+  function enterMonsterPhase(mode, durationMs) {
+    state.eventPhaseElapsedMs = 0;
+    state.eventPhaseDurationMs = Math.max(0, durationMs);
+    state.mode = mode;
+  }
+
+  function beginMonsterCast() {
+    if (!state.activeMonster) return;
+    enterMonsterPhase('MONSTER_CAST', GAME_CONFIG.monsterCastDurationMs);
+  }
+
+  function beginMonsterImpact() {
+    if (!state.activeMonster) return;
+    state.monsterImpactSerial += 1;
+    enterMonsterPhase('MONSTER_IMPACT', GAME_CONFIG.monsterImpactEffectDurationMs);
+  }
+
+  function beginAttackToDebuffDelay() {
+    if (!state.activeMonster) return;
+    enterMonsterPhase('ATTACK_TO_DEBUFF_DELAY', GAME_CONFIG.monsterAttackToDebuffDelayMs);
+  }
+
+  function beginMonsterDebuffReveal() {
+    if (!state.activeMonster) return;
+    const appliedDebuff = applyDebuff(state, state.activeMonster.failureDebuff);
+    state.monsterDebuffApplied = Boolean(appliedDebuff);
+    enterMonsterPhase('DEBUFF_REVEAL', GAME_CONFIG.monsterDebuffRevealDurationMs);
+  }
+
+  function beginDebuffToAnswerDelay() {
+    if (!state.activeMonster) return;
+    enterMonsterPhase('DEBUFF_TO_ANSWER_DELAY', GAME_CONFIG.monsterDebuffToAnswerDelayMs);
+  }
+
+  function beginMonsterAnswerPreviewDisplay() {
+    if (!state.activeMonster) return;
+    enterMonsterPhase('ANSWER_PREVIEW', GAME_CONFIG.monsterAnswerPreviewDurationMs);
+  }
+
+  function advanceMonsterEventPhase() {
+    switch (state.mode) {
+      case 'EVENT_WARNING': beginMonsterEntrance(); break;
+      case 'MONSTER_ENTRANCE': beginMonsterCast(); break;
+      case 'MONSTER_CAST': beginMonsterImpact(); break;
+      case 'MONSTER_IMPACT': beginAttackToDebuffDelay(); break;
+      case 'ATTACK_TO_DEBUFF_DELAY': beginMonsterDebuffReveal(); break;
+      case 'DEBUFF_REVEAL': beginDebuffToAnswerDelay(); break;
+      case 'DEBUFF_TO_ANSWER_DELAY': beginMonsterAnswerPreviewDisplay(); break;
+      case 'ANSWER_PREVIEW': beginMonsterQte(); break;
+      default: break;
+    }
+  }
+
+  function beginMonsterQte() {
+    if (!state.activeMonster || !state.preparedQte) return;
+    // The QTE letters are prepared before the answer preview, but become
+    // interactive only when the preview phase has fully elapsed.
+    state.activeQte = state.preparedQte;
+    state.preparedQte = null;
+    state.eventPhaseElapsedMs = 0;
+    state.eventPhaseDurationMs = 0;
     state.mode = 'MONSTER_QTE';
   }
 
@@ -350,24 +779,30 @@ export function createGame(options = {}) {
     state.mode = 'CLIMBING';
     state.rhythmTapSerial = rhythmTapSerial;
     state.rhythmFeedbackSerial = rhythmFeedbackSerial;
+    state.rhythmLaunchSerial = rhythmLaunchSerial;
     startNextRhythmRound();
     previousFrameTime = Number.isFinite(timestamp) ? timestamp : null;
     notify();
   }
 
   function pressRhythm(timestamp = globalThis.performance?.now?.()) {
-    if (state.mode !== 'CLIMBING') return { status: 'ignored' };
-    state.rhythmTapSerial = ++rhythmTapSerial;
+    if (state.mode !== 'CLIMBING' && state.mode !== 'COMBAT_ATTACK') return { status: 'ignored' };
+    const roundBeforeUpdate = state.rhythmRound;
+    const modeBeforeUpdate = state.mode;
     const previousFeedbackSerial = state.rhythmFeedbackSerial;
-    if (state.mode === 'CLIMBING' && previousFrameTime !== null && Number.isFinite(timestamp)) {
+    if (previousFrameTime !== null && Number.isFinite(timestamp)) {
       update(timestamp);
     }
-    if (state.mode !== 'CLIMBING') return { status: 'ignored' };
+    if (state.mode !== modeBeforeUpdate || (state.mode !== 'CLIMBING' && state.mode !== 'COMBAT_ATTACK')) return { status: 'ignored' };
     if (state.rhythmFeedbackSerial !== previousFeedbackSerial && state.rhythmFeedbackKind === 'miss') {
       return { status: 'missed-window' };
     }
+    // A press that advances the old ball to its endpoint must not spill into
+    // the newly spawned ball, even if a long frame also consumed its ready beat.
+    if (state.rhythmRound !== roundBeforeUpdate) return { status: 'ignored' };
     const round = state.rhythmRound;
-    if (!round) return { status: 'ignored' };
+    if (!round || round.phase !== RHYTHM_PHASE.MOVING) return { status: 'ignored' };
+    state.rhythmTapSerial = ++rhythmTapSerial;
     if (!isBallInZone()) {
       failRhythmRound();
       notify();
@@ -393,19 +828,34 @@ export function createGame(options = {}) {
     const result = clickQteTile(state.activeQte, tileId);
     if (result.status === 'reset') state.activeQte.message = UI_TEXT.qteWrong;
     else if (result.status === 'progress') state.activeQte.message = '';
-    else if (result.status === 'complete') {
-      resolveSolution(result.solution);
-    }
+    else if (result.status === 'complete') resolveSolution(result.solution);
     notify();
     return result;
   }
 
+  function pressCombatShield(shieldId, timestamp = globalThis.performance?.now?.()) {
+    if (state.mode !== 'COMBAT_DEFENSE') return { status: 'ignored' };
+    if (previousFrameTime !== null && Number.isFinite(timestamp)) update(timestamp);
+    if (state.mode !== 'COMBAT_DEFENSE' || !state.combatDefenseRound) return { status: 'ignored' };
+
+    const nowMs = state.combatDefenseRound.elapsedMs;
+    const projectile = state.combatDefenseRound.projectiles
+      .filter((shot) => shot.targetShieldId === shieldId && shot.status === 'active' &&
+        nowMs >= shot.windowStartMs && nowMs < shot.impactTimeMs)
+      .sort((first, second) => first.impactTimeMs - second.impactTimeMs)[0];
+    if (!projectile) return { status: 'ignored' };
+
+    projectile.status = 'defended';
+    notify();
+    return { status: 'defended', projectileId: projectile.id };
+  }
+
   function pause(timestamp = globalThis.performance?.now?.()) {
-    if ((state.mode === 'CLIMBING' || state.mode === 'MONSTER_QTE') &&
+    if (PAUSABLE_MODES.has(state.mode) &&
         previousFrameTime !== null && Number.isFinite(timestamp)) {
       update(timestamp);
     }
-    if (state.mode !== 'CLIMBING' && state.mode !== 'MONSTER_QTE') return false;
+    if (!PAUSABLE_MODES.has(state.mode)) return false;
     state.resumeMode = state.mode;
     state.mode = 'PAUSED';
     previousFrameTime = null;
@@ -439,10 +889,39 @@ export function createGame(options = {}) {
     }
     const deltaMs = Math.max(0, now - previousFrameTime);
     previousFrameTime = now;
-    if (state.mode !== 'CLIMBING' && state.mode !== 'MONSTER_QTE') return;
+    if (state.mode !== 'CLIMBING' && state.mode !== 'MONSTER_QTE' &&
+        !MONSTER_EVENT_PHASES.has(state.mode) && !COMBAT_MODES.has(state.mode)) return;
 
     let remainingMs = deltaMs;
     while (remainingMs > 1e-6) {
+      if (MONSTER_EVENT_PHASES.has(state.mode)) {
+        const durationMs = Math.max(0, state.eventPhaseDurationMs);
+        const untilPhaseEndMs = Math.max(0, durationMs - state.eventPhaseElapsedMs);
+        const elapsedMs = Math.min(remainingMs, untilPhaseEndMs);
+        state.timerMs += elapsedMs;
+        state.eventPhaseElapsedMs += elapsedMs;
+        remainingMs -= elapsedMs;
+        if (state.eventPhaseElapsedMs + 1e-6 >= durationMs) {
+          advanceMonsterEventPhase();
+          continue;
+        }
+        break;
+      }
+
+      if (COMBAT_TIMED_PHASES.has(state.mode)) {
+        const durationMs = Math.max(0, state.eventPhaseDurationMs);
+        const untilPhaseEndMs = Math.max(0, durationMs - state.eventPhaseElapsedMs);
+        const elapsedMs = Math.min(remainingMs, untilPhaseEndMs);
+        state.timerMs += elapsedMs;
+        state.eventPhaseElapsedMs += elapsedMs;
+        remainingMs -= elapsedMs;
+        if (state.eventPhaseElapsedMs + 1e-6 >= durationMs) {
+          advanceCombatPhase();
+          continue;
+        }
+        break;
+      }
+
       if (state.mode === 'MONSTER_QTE') {
         if (!state.activeQte) break;
         const elapsedMs = Math.min(remainingMs, state.activeQte.remainingMs);
@@ -450,6 +929,22 @@ export function createGame(options = {}) {
         state.activeQte.remainingMs = Math.max(0, state.activeQte.remainingMs - elapsedMs);
         remainingMs -= elapsedMs;
         if (state.activeQte.remainingMs <= 0) resolveQteFailure();
+        continue;
+      }
+      if (state.mode === 'COMBAT_DEFENSE') {
+        const round = state.combatDefenseRound;
+        if (!round) break;
+        const elapsedMs = Math.min(remainingMs, Math.max(0, round.durationMs - round.elapsedMs));
+        state.timerMs += elapsedMs;
+        remainingMs -= elapsedMs;
+        advanceCombatDefenseRound(elapsedMs);
+        if (state.mode !== 'COMBAT_DEFENSE') continue;
+        break;
+      }
+      if (state.mode === 'COMBAT_ATTACK') {
+        state.timerMs += remainingMs;
+        advanceRhythm(remainingMs);
+        remainingMs = 0;
         continue;
       }
       if (state.mode !== 'CLIMBING') break;
@@ -554,6 +1049,7 @@ export function createGame(options = {}) {
     start,
     pressRhythm,
     pressQteLetter,
+    pressCombatShield,
     pause,
     resume,
     setAntiDizzinessMode,

@@ -1,11 +1,22 @@
+const startFloor = 1;
+const maxFloor = 101;
+const monsterEventIntervalFloors = 5;
+const monsterEventFloors = Object.freeze(Array.from(
+  { length: Math.ceil((maxFloor - startFloor) / monsterEventIntervalFloors) },
+  (_, index) => Object.freeze({
+    min: startFloor + index * monsterEventIntervalFloors,
+    max: Math.min(startFloor + (index + 1) * monsterEventIntervalFloors, maxFloor)
+  })
+));
+
 export const GAME_CONFIG = Object.freeze({
-  startFloor: 1,
-  maxFloor: 101,
+  startFloor,
+  maxFloor,
   initialClimbSpeed: 0.1,
   minClimbSpeed: 0.1,
   maxClimbSpeed: 0.3,
   hitSpeedBonus: 0.02,
-  speedDecay: 0.01,
+  speedDecay: 0.005,
   stepCycleDistanceFloors: 0.1,
   basePlatformPauseDurationMs: 100,
   baseStairTurnDurationMs: 1200,
@@ -16,21 +27,65 @@ export const GAME_CONFIG = Object.freeze({
   minHitZoneWidth: 0.18,
   fatigueHitZonePenalty: 0.04,
   fatigueMinHitZoneWidth: 0.14,
-  rhythmStartDelayMs: 100,
   rhythmBeatDurationMs: 500,
+  rhythmPrepareBeats: 2,
+  rhythmReadyRingStartScale: 1.9,
+  rhythmReadyFlashMs: 100,
+  rhythmRespawnDelayMs: 100,
+  rhythmBallEdgeGapPx: 12,
   monsterQteDurationMs: 6000,
-  monsterEventFloors: [
-    { min: 6, max: 12 },
-    { min: 15, max: 21 },
-    { min: 24, max: 30 },
-    { min: 33, max: 39 },
-    { min: 42, max: 48 },
-    { min: 51, max: 57 },
-    { min: 60, max: 66 },
-    { min: 69, max: 75 },
-    { min: 78, max: 84 },
-    { min: 90, max: 97 }
-  ],
+  monsterMaxHp: 3,
+  combatDamagePerHit: 1,
+  combatRoundIntroDurationMs: 800,
+  combatDefenseProjectileTravelTimeMs: 600,
+  combatDefenseProjectileIntervalMs: 200,
+  combatDefenseHitWindowMs: 200,
+  combatDefenseResultDurationMs: 650,
+  combatDefensePatterns: Object.freeze([
+    Object.freeze({
+      id: 'TWO_SHIELDS',
+      shields: Object.freeze([
+        Object.freeze({ id: 'left', x: 27, y: 66 }),
+        Object.freeze({ id: 'right', x: 73, y: 66 })
+      ]),
+      projectiles: Object.freeze([
+        Object.freeze({ id: 'A', targetShieldId: 'left', launchIndex: 0 }),
+        Object.freeze({ id: 'B', targetShieldId: 'right', launchIndex: 1 })
+      ])
+    }),
+    Object.freeze({
+      id: 'THREE_SHIELDS',
+      shields: Object.freeze([
+        Object.freeze({ id: 'left', x: 20, y: 63 }),
+        Object.freeze({ id: 'center', x: 50, y: 71 }),
+        Object.freeze({ id: 'right', x: 80, y: 63 })
+      ]),
+      projectiles: Object.freeze([
+        Object.freeze({ id: 'A', targetShieldId: 'left', launchIndex: 0 }),
+        Object.freeze({ id: 'B', targetShieldId: 'center', launchIndex: 1 }),
+        Object.freeze({ id: 'C', targetShieldId: 'right', launchIndex: 2 })
+      ])
+    })
+  ]),
+  combatPlayerAttackDurationMs: 460,
+  combatMonsterDeathDurationMs: 850,
+  monsterEventIntervalFloors,
+  monsterEventFractions: Object.freeze([0.2, 0.7]),
+  monsterEventFloors,
+  monsterWarningFlashDurationMs: 600,
+  monsterWarningGapDurationMs: 250,
+  monsterWarningFlashCount: 2,
+  monsterWarningMaxOpacity: 0.3,
+  monsterWarningReducedMotionOpacity: 0.14,
+  monsterEntranceDurationMs: 700,
+  monsterCastDurationMs: 1000,
+  monsterImpactEffectDurationMs: 340,
+  monsterAttackToDebuffDelayMs: 500,
+  monsterDebuffRevealDurationMs: 450,
+  monsterDebuffToAnswerDelayMs: 800,
+  monsterAnswerPreviewDurationMs: 1800,
+  debuffCureFlashDurationMs: 400,
+  debuffCureFlashCount: 2,
   qteLetterMin: 8,
   qteLetterMax: 12,
   bestRecordStorageKey: 'dengfeng-zaoji-best-time-v1',
@@ -104,6 +159,14 @@ export const UI_TEXT = Object.freeze({
   debuffApplied: '留下 {name} 狀態',
   debuffCured: '魔法解除',
   qtePassed: '安全通過',
+  combatAttackHit: '命中怪物！',
+  combatAttackMiss: '攻擊落空，準備防禦',
+  combatAttackRound: '攻擊回合！',
+  combatDefenseRound: '防禦回合！',
+  combatDefensePrompt: '點擊亮起的白盾',
+  combatDefenseSuccess: '防禦成功',
+  combatDefenseFailure: '防禦失敗',
+  combatMonsterDefeated: '怪物擊敗！繼續攀登',
   turnFeedback: '平台到了！轉向下一段樓梯',
   platformPauseFeedback: '站穩平台，準備轉身',
   pauseAria: '暫停或繼續遊戲',

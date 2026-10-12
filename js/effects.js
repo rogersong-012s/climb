@@ -25,9 +25,9 @@ export function applySolutionEffect(state, solution) {
     case 'CURE':
       if (state.debuff?.type === solution.debuffType) {
         state.debuff = null;
-        return { message: UI_TEXT.debuffCured, kind: 'success' };
+        return { message: UI_TEXT.debuffCured, kind: 'success', debuffCured: true };
       }
-      return { message: UI_TEXT.qtePassed, kind: 'success' };
+      return { message: UI_TEXT.qtePassed, kind: 'success', debuffCured: false };
     case 'PAN_ATTACK':
       applyDebuff(state, solution.debuff);
       return { message: UI_TEXT.monsterWon, kind: 'success' };

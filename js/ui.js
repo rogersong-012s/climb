@@ -1,5 +1,6 @@
 import { ANTI_DIZZINESS_MODE, GAME_CONFIG, UI_TEXT } from './config.js';
 import { formatStairProgress, stairSegmentProgress, STAIR_VIEW_MODE } from './stairs.js';
+import { RHYTHM_PHASE } from './rhythm.js';
 
 function formatTime(milliseconds) {
   const totalCs = Math.floor(Math.max(0, milliseconds) / 10);
@@ -14,6 +15,26 @@ function escapeHtml(value) {
   return String(value).replace(/[&<>"']/g, (character) => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
   })[character]);
+}
+
+function eventWarningOpacity(state) {
+  const flashDurationMs = GAME_CONFIG.monsterWarningFlashDurationMs;
+  const gapDurationMs = GAME_CONFIG.monsterWarningGapDurationMs;
+  const flashCount = GAME_CONFIG.monsterWarningFlashCount;
+  const pulseIntervalMs = flashDurationMs + gapDurationMs;
+  const elapsedMs = state.eventPhaseElapsedMs ?? 0;
+  const reducedMotion = globalThis.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches ?? false;
+  const maxOpacity = reducedMotion
+    ? GAME_CONFIG.monsterWarningReducedMotionOpacity
+    : GAME_CONFIG.monsterWarningMaxOpacity;
+
+  for (let pulse = 0; pulse < flashCount; pulse += 1) {
+    const pulseElapsedMs = elapsedMs - pulse * pulseIntervalMs;
+    if (pulseElapsedMs < 0 || pulseElapsedMs > flashDurationMs) continue;
+    const progress = Math.min(1, pulseElapsedMs / flashDurationMs);
+    return maxOpacity * Math.sin(Math.PI * progress) ** 2;
+  }
+  return 0;
 }
 
 function easeTurn(value) {
@@ -1036,7 +1057,9 @@ export function createUI(onAction) {
   const announcer = byId('announcer');
   const comboStamp = byId('combo-stamp');
   const modalLayer = byId('modal-layer');
+  const purifyFrame = byId('purify-frame');
   const qteLayer = byId('qte-layer');
+  const gameRoot = byId('game');
   const arena = byId('arena');
   const climber = byId('climber');
   const sceneA = byId('scene-a');
@@ -1056,6 +1079,13 @@ export function createUI(onAction) {
   let lastRhythmRound = null;
   let lastRhythmTapSerial = 0;
   let lastRhythmFeedbackSerial = 0;
+  let lastRhythmLaunchSerial = 0;
+  let lastMonsterImpactSerial = 0;
+  let lastDebuffCureSerial = 0;
+  let lastCombatViewMode = null;
+  let lastCombatAttackSerial = 0;
+  let lastCombatMonsterId = null;
+  let lastCombatDamageFlashSerial = 0;
 
   function antiDizzinessSetting(state) {
     const enabled = state.antiDizzinessMode === ANTI_DIZZINESS_MODE.ON;
@@ -1081,7 +1111,9 @@ export function createUI(onAction) {
     const mode = state.mode;
     if (mode === lastMode) return;
     lastMode = mode;
-    if (mode === 'CLIMBING' || mode === 'MONSTER_QTE') {
+    if (mode === 'CLIMBING' || mode === 'EVENT_WARNING' || mode === 'MONSTER_ENTRANCE' ||
+        mode === 'MONSTER_CAST' || mode === 'MONSTER_IMPACT' || mode === 'ATTACK_TO_DEBUFF_DELAY' ||
+        mode === 'DEBUFF_REVEAL' || mode === 'DEBUFF_TO_ANSWER_DELAY' || mode === 'ANSWER_PREVIEW' || mode === 'MONSTER_QTE' || mode.startsWith('COMBAT_')) {
       modalLayer.hidden = true;
       modalLayer.innerHTML = '';
       return;
@@ -1240,33 +1272,48 @@ export function createUI(onAction) {
   window.addEventListener('resize', () => scheduleTurnScenePreload(120), { passive: true });
   requestAnimationFrame(ensureTurnSceneCache);
 
-  function buildQte(qte) {
-    const monster = qte.monster;
+  function monsterPresenceMarkup(monster, className = '') {
+    return '<div class="monster-presence monster-' + escapeHtml(monster.id) + (className ? ' ' + className : '') + '" aria-hidden="true"><span class="monster-horns"></span><span class="monster-eye left-eye"></span><span class="monster-eye right-eye"></span><span class="monster-mouth"></span><i class="monster-arm arm-left"></i><i class="monster-arm arm-right"></i></div>';
+  }
+
+  function monsterVitalsMarkup(monster, hp, maxHp) {
+    const safeMaxHp = Math.max(1, Number(maxHp) || GAME_CONFIG.monsterMaxHp);
+    const safeHp = Math.max(0, Math.min(safeMaxHp, Number(hp) || 0));
+    return '<div class="monster-vitals" aria-label="' + escapeHtml(monster.name) + ' HP ' + safeHp + ' / ' + safeMaxHp + '">' +
+      '<strong class="monster-vitals-name">' + escapeHtml(monster.name) + '</strong>' +
+      '<span class="monster-hp-track"><span class="monster-hp-fill" style="width:' + ((safeHp / safeMaxHp) * 100) + '%"></span></span>' +
+      '<span class="monster-hp-value">' + safeHp + '/' + safeMaxHp + '</span>' +
+    '</div>';
+  }
+
+  function combatMonsterMarkup(state, mode) {
+    if (!state.activeMonster) return '';
+    const defeated = mode === 'COMBAT_VICTORY' ? ' is-defeated' : '';
+    return monsterPresenceMarkup(state.activeMonster, 'is-settled' + defeated) +
+      monsterVitalsMarkup(state.activeMonster, state.monsterHp, state.monsterMaxHp);
+  }
+
+  function buildCombatDefenseMarkup(round) {
+    if (!round) return '';
+    const projectiles = round.projectiles.map((projectile) =>
+      '<span class="defense-projectile" data-shot-id="' + escapeHtml(projectile.id) + '" aria-hidden="true"></span>'
+    ).join('');
+    const shields = round.shields.map((shield, index) =>
+      '<button class="defense-shield" type="button" data-shield-id="' + escapeHtml(shield.id) + '" ' +
+      'style="left:' + Number(shield.x) + '%;top:' + Number(shield.y) + '%" ' +
+      'aria-label="盾牌 ' + (index + 1) + '，尚未亮起">' +
+      '<svg viewBox="0 0 48 56" aria-hidden="true"><path d="M24 3 43 10v15c0 13-8 22-19 28C13 47 5 38 5 25V10z"/></svg>' +
+      '</button>'
+    ).join('');
+    return '<div class="combat-defense-field" aria-label="點擊亮起的白盾防禦">' +
+      projectiles + shields + '<p class="combat-defense-instruction">點擊亮起的白盾</p></div>';
+  }
+
+  function appendQteTiles(grid, qte) {
     const positions = [
       [14, 12], [39, 8], [66, 16], [87, 11], [23, 41], [55, 35],
       [84, 45], [10, 67], [39, 76], [69, 68], [91, 82], [53, 93]
     ];
-    qteLayer.innerHTML =
-      '<div class="qte-card">' +
-        '<div class="qte-banner">' +
-          '<div class="qte-topline"><span class="qte-alert">⚠ ' + UI_TEXT.qteTitle + '</span><span class="qte-clock" id="qte-clock">6.0s</span></div>' +
-          '<div class="qte-timer-track"><span id="qte-timer-bar"></span></div>' +
-        '</div>' +
-        '<div class="monster-presence monster-' + escapeHtml(monster.id) + '" aria-hidden="true"><span class="monster-horns"></span><span class="monster-eye left-eye"></span><span class="monster-eye right-eye"></span><span class="monster-mouth"></span><i class="monster-arm arm-left"></i><i class="monster-arm arm-right"></i></div>' +
-          '<div class="qte-information">' +
-          '<div class="monster-intro"><span class="monster-flag">' + UI_TEXT.monsterLabel + '</span><strong>' + escapeHtml(monster.name) + '</strong><span class="qte-spell"><span>' + UI_TEXT.spellLabel + '：</span>' + escapeHtml(monster.spell) + '</span></div>' +
-          '<div class="solution-list" aria-label="' + UI_TEXT.solutionsLabel + '"><div>' +
-            monster.solutions.map((solution) =>
-              '<span class="solution-chip"><b>' + escapeHtml(solution.word) + '</b><small>' + escapeHtml(solution.description) + '</small></span>'
-            ).join('') +
-          '</div></div>' +
-          '<p class="qte-instruction">' + UI_TEXT.qteInstruction + '</p>' +
-          '<p class="qte-message" id="qte-message" aria-live="polite"></p>' +
-        '</div>' +
-        '<div class="letter-grid" id="letter-grid"></div>' +
-      '</div>';
-    const grid = byId('letter-grid');
-    lastQteMessage = '';
     qte.tiles.forEach((tile) => {
       const button = document.createElement('button');
       button.type = 'button';
@@ -1280,6 +1327,188 @@ export function createUI(onAction) {
       button.setAttribute('aria-label', '字母 ' + tile.letter);
       grid.append(button);
     });
+  }
+
+  function buildCombatView(state, mode) {
+    const monster = state.activeMonster;
+    if (!monster) return;
+    const monsterMarkup = combatMonsterMarkup(state, mode);
+    let phaseMarkup = '';
+    if (mode === 'COMBAT_ATTACK_INTRO') {
+      phaseMarkup = '<p class="combat-round-prompt is-attack">' + escapeHtml(UI_TEXT.combatAttackRound) + '</p>';
+    } else if (mode === 'COMBAT_ATTACK') {
+      phaseMarkup = '<span class="player-attack-projectile" aria-hidden="true"></span>';
+    } else if (mode === 'COMBAT_ATTACK_SETTLE') {
+      phaseMarkup = '<span class="player-attack-projectile is-firing" aria-hidden="true"></span>';
+    } else if (mode === 'COMBAT_DEFENSE_INTRO') {
+      phaseMarkup = '<p class="combat-round-prompt is-defense">' + escapeHtml(UI_TEXT.combatDefenseRound) + '</p>';
+    } else if (mode === 'COMBAT_DEFENSE') {
+      phaseMarkup = buildCombatDefenseMarkup(state.combatDefenseRound);
+    } else if (mode === 'COMBAT_DEFENSE_SUCCESS') {
+      phaseMarkup = '<div class="combat-shield" aria-hidden="true"><span>◆</span></div><p class="combat-feedback">' + escapeHtml(UI_TEXT.combatDefenseSuccess) + '</p>';
+    } else if (mode === 'COMBAT_DEFENSE_FAILED') {
+      phaseMarkup = '<p class="combat-feedback combat-defense-failed">' + escapeHtml(UI_TEXT.combatDefenseFailure) + '</p>';
+    } else if (mode === 'COMBAT_VICTORY') {
+      phaseMarkup = '<p class="combat-feedback combat-victory-label">' + escapeHtml(UI_TEXT.combatMonsterDefeated) + '</p>';
+    }
+    qteLayer.innerHTML = '<div class="qte-card combat-card">' + monsterMarkup + phaseMarkup + '</div>';
+    qteLayer.classList.remove('is-urgent');
+    qteLayer.style.removeProperty('--monster-entrance-delay');
+    qteLayer.style.removeProperty('--monster-cast-delay');
+    qteLayer.style.removeProperty('--combat-attack-delay');
+    qteLayer.style.setProperty('--combat-round-intro-duration', GAME_CONFIG.combatRoundIntroDurationMs + 'ms');
+    if (mode === 'COMBAT_ATTACK_SETTLE') {
+      qteLayer.style.setProperty('--combat-attack-delay', -(GAME_CONFIG.combatPlayerAttackDurationMs - state.eventPhaseDurationMs) + 'ms');
+    }
+    lastQteObject = null;
+    lastQteMessage = '';
+    lastCombatViewMode = mode;
+    if (mode !== 'COMBAT_ATTACK') lastCombatAttackSerial = state.combatAttackSerial;
+  }
+
+  function updateCombatDefenseRound(round) {
+    if (!round) return;
+    const nowMs = round.elapsedMs;
+    round.projectiles.forEach((projectile) => {
+      const ball = qteLayer.querySelector('[data-shot-id="' + projectile.id + '"]');
+      const target = round.shields.find((shield) => shield.id === projectile.targetShieldId);
+      if (!ball || !target) return;
+      const visible = nowMs >= projectile.launchTimeMs && nowMs < projectile.impactTimeMs;
+      ball.hidden = !visible;
+      if (!visible) return;
+      const rawProgress = Math.max(0, Math.min(1, (nowMs - projectile.launchTimeMs) /
+        Math.max(1, projectile.impactTimeMs - projectile.launchTimeMs)));
+      const easedProgress = 1 - (1 - rawProgress) ** 2;
+      const x = 50 + (target.x - 50) * easedProgress;
+      const y = 44 + (target.y - 44) * easedProgress - Math.sin(Math.PI * rawProgress) * 3;
+      ball.style.left = x + '%';
+      ball.style.top = y + '%';
+      ball.classList.toggle('is-near-impact', nowMs >= projectile.windowStartMs);
+    });
+
+    round.shields.forEach((shield, index) => {
+      const button = qteLayer.querySelector('[data-shield-id="' + shield.id + '"]');
+      if (!button) return;
+      const shots = round.projectiles.filter((projectile) => projectile.targetShieldId === shield.id);
+      const active = shots.some((projectile) => projectile.status === 'active');
+      const defended = shots.some((projectile) => projectile.status === 'defended' || projectile.status === 'blocked');
+      const blocked = shots.some((projectile) => projectile.status === 'blocked');
+      const missed = shots.some((projectile) => projectile.status === 'missed');
+      const complete = shots.length > 0 && shots.every((projectile) => ['blocked', 'missed'].includes(projectile.status));
+      button.classList.toggle('is-active', active);
+      button.classList.toggle('is-defended', defended);
+      button.classList.toggle('is-blocked', blocked);
+      button.classList.toggle('is-missed', missed);
+      button.classList.toggle('is-complete', complete);
+      const stateText = active ? '現在點擊' : complete ? (missed ? '未擋下' : '已擋下') : defended ? '已點擊，等待抵達' : '尚未亮起';
+      button.setAttribute('aria-label', '盾牌 ' + (index + 1) + '，' + stateText);
+    });
+  }
+
+  function updateCombatVitals(state) {
+    const fill = qteLayer.querySelector('.monster-hp-fill');
+    const value = qteLayer.querySelector('.monster-hp-value');
+    const vitals = qteLayer.querySelector('.monster-vitals');
+    if (!fill || !value || !vitals) return;
+    const maxHp = Math.max(1, state.monsterMaxHp ?? GAME_CONFIG.monsterMaxHp);
+    const hp = Math.max(0, Math.min(maxHp, state.monsterHp ?? maxHp));
+    fill.style.width = ((hp / maxHp) * 100) + '%';
+    value.textContent = hp + '/' + maxHp;
+    vitals.setAttribute('aria-label', state.activeMonster.name + ' HP ' + hp + ' / ' + maxHp);
+  }
+
+  function triggerCombatAttackAnimation(state) {
+    if (state.combatAttackSerial < lastCombatAttackSerial) lastCombatAttackSerial = state.combatAttackSerial;
+    if (state.combatAttackSerial <= lastCombatAttackSerial) return;
+    lastCombatAttackSerial = state.combatAttackSerial;
+    const projectile = qteLayer.querySelector('.player-attack-projectile');
+    if (!projectile) return;
+    projectile.classList.remove('is-firing');
+    void qteLayer.offsetWidth;
+    projectile.classList.add('is-firing');
+  }
+
+  function triggerCombatDefenseHitFlash(state) {
+    if (state.combatDamageFlashSerial === lastCombatDamageFlashSerial) return;
+    lastCombatDamageFlashSerial = state.combatDamageFlashSerial;
+    qteLayer.classList.remove('is-combat-hit-flash');
+    void qteLayer.offsetWidth;
+    qteLayer.classList.add('is-combat-hit-flash');
+  }
+
+  function buildMonsterEntrance(monster, elapsedMs = 0, hp = GAME_CONFIG.monsterMaxHp, maxHp = GAME_CONFIG.monsterMaxHp) {
+    const entranceElapsedMs = Math.min(GAME_CONFIG.monsterEntranceDurationMs, Math.max(0, elapsedMs));
+    qteLayer.style.setProperty('--monster-entrance-delay', -entranceElapsedMs + 'ms');
+    qteLayer.classList.remove('is-urgent');
+    qteLayer.innerHTML = '<div class="qte-card qte-entrance-card">' +
+      monsterPresenceMarkup(monster, 'is-descending') +
+      monsterVitalsMarkup(monster, hp, maxHp) +
+      '<span class="monster-cast-energy" aria-hidden="true"></span>' +
+      '<span class="monster-hit-flare" aria-hidden="true"></span>' +
+      '</div>';
+    lastQteMessage = '';
+    lastQteObject = null;
+  }
+
+  function showAnswerPreview(qte, compact = false) {
+    const card = qteLayer.querySelector('.qte-card');
+    if (!card || !qte?.monster || card.querySelector('.answer-preview')) return;
+    const preview = document.createElement('div');
+    preview.className = 'answer-preview' + (compact ? ' is-compact' : '');
+    preview.setAttribute('role', 'status');
+    preview.setAttribute('aria-label', '本次 QTE 可選答案');
+    const [first, second] = (qte.monster.solutions ?? []).slice(0, 2);
+    if (first) {
+      const firstWord = document.createElement('strong');
+      firstWord.className = 'answer-preview-word answer-preview-primary';
+      firstWord.textContent = first.word;
+      preview.append(firstWord);
+    }
+    if (first && second) {
+      const separator = document.createElement('span');
+      separator.className = 'answer-preview-or';
+      separator.textContent = 'OR';
+      preview.append(separator);
+    }
+    if (second) {
+      const secondWord = document.createElement('strong');
+      secondWord.className = 'answer-preview-word answer-preview-secondary';
+      secondWord.textContent = second.word;
+      preview.append(secondWord);
+    }
+    const hint = document.createElement('span');
+    hint.className = 'answer-preview-hint';
+    hint.textContent = '依序輸入，解除減益';
+    preview.append(hint);
+    card.append(preview);
+  }
+
+  function buildQte(qte) {
+    const monster = qte.monster;
+    const settledMonster = qteLayer.querySelector('.monster-presence');
+    qteLayer.style.removeProperty('--monster-entrance-delay');
+    qteLayer.style.removeProperty('--monster-cast-delay');
+    qteLayer.innerHTML =
+      '<div class="qte-card">' +
+        '<div class="qte-banner">' +
+          '<div class="qte-topline"><span class="qte-alert">QTE</span><span class="qte-clock" id="qte-clock">6.0s</span></div>' +
+          '<div class="qte-timer-track"><span id="qte-timer-bar"></span></div>' +
+        '</div>' +
+        monsterPresenceMarkup(monster) +
+        monsterVitalsMarkup(monster, qte.monsterHp ?? GAME_CONFIG.monsterMaxHp, qte.monsterMaxHp ?? GAME_CONFIG.monsterMaxHp) +
+        '<p class="qte-message" id="qte-message" aria-live="polite"></p>' +
+        '<div class="letter-grid" id="letter-grid"></div>' +
+      '</div>';
+    showAnswerPreview(qte, true);
+    const qteMonster = qteLayer.querySelector('.monster-presence');
+    if (settledMonster && qteMonster) {
+      settledMonster.classList.remove('is-descending');
+      settledMonster.classList.add('is-settled');
+      qteMonster.replaceWith(settledMonster);
+    }
+    const grid = byId('letter-grid');
+    lastQteMessage = '';
+    appendQteTiles(grid, qte);
   }
 
   function updateQte(qte) {
@@ -1310,12 +1539,15 @@ export function createUI(onAction) {
   }
 
   function updateRhythmTrack(state, game) {
+    const activeMode = state.mode === 'PAUSED' ? state.resumeMode : state.mode;
     const round = state.rhythmRound;
     const windows = game.getRhythmHitWindows();
     const ballDiameter = 24;
     const ballRadius = ballDiameter / 2;
-    const trackPosition = (progress) => 'calc(' + (progress * 100) + '% + ' + (ballRadius - ballDiameter * progress) + 'px)';
+    const edgeInset = ballRadius + GAME_CONFIG.rhythmBallEdgeGapPx;
+    const trackPosition = (progress) => 'calc(' + (progress * 100) + '% + ' + (edgeInset - 2 * edgeInset * progress) + 'px)';
     if (round !== lastRhythmRound) {
+      track.classList.remove('is-rhythm-hit', 'is-rhythm-miss', 'is-feedback-active');
       trackZones.replaceChildren(...windows.map((window) => {
         const marker = document.createElement('span');
         marker.className = 'track-zone';
@@ -1325,25 +1557,53 @@ export function createUI(onAction) {
       lastRhythmRound = round;
       track.dataset.rhythmType = round?.typeId ?? '';
       track.setAttribute('aria-label', round ? round.label + '節奏軌道' : '節奏判定軌道');
+      const ringScale = GAME_CONFIG.rhythmReadyRingStartScale;
+      ball.style.setProperty('--rhythm-ready-duration', (round?.readyDurationMs ?? GAME_CONFIG.rhythmBeatDurationMs) + 'ms');
+      ball.style.setProperty('--rhythm-ready-flash-duration', GAME_CONFIG.rhythmReadyFlashMs + 'ms');
+      ball.style.setProperty('--rhythm-ready-ring-size', (ringScale * 100) + '%');
+      ball.style.setProperty('--rhythm-ready-ring-end-scale', String(1 / ringScale));
     }
 
-    rhythmLabel.textContent = round
-      ? round.label + ' · ' + round.inputIndex + '/' + round.hitBeats.length
-      : state.mode === 'MONSTER_QTE' ? 'QTE 中斷節奏' : '等待節奏球';
+    if (round) {
+      rhythmLabel.textContent = (activeMode === 'COMBAT_ATTACK' ? '攻擊回合 · ' : '') +
+        round.label + ' · ' + round.inputIndex + '/' + round.hitBeats.length;
+    } else {
+      const rhythmModeLabels = {
+        COMBAT_ATTACK_INTRO: '準備攻擊',
+        COMBAT_DEFENSE_INTRO: '準備防禦',
+        COMBAT_DEFENSE: '點擊亮起的白盾',
+        MONSTER_QTE: 'QTE 中斷節奏'
+      };
+      rhythmLabel.textContent = rhythmModeLabels[activeMode] ?? '等待節奏球';
+    }
     windows.forEach((window, index) => {
       const marker = trackZones.children[index];
       if (!marker) return;
       marker.style.left = trackPosition(window.center);
-      marker.style.width = 'calc(' + (window.width * 100) + '% - ' + (ballDiameter * window.width) + 'px)';
+      marker.style.width = 'calc(' + (window.width * 100) + '% - ' + (2 * edgeInset * window.width) + 'px)';
       marker.classList.toggle('is-current', window.status === 'current');
       marker.classList.toggle('is-complete', window.status === 'complete');
+      marker.classList.toggle('is-locked', window.status === 'locked');
       marker.dataset.status = window.status;
     });
 
-    ball.hidden = !round;
-    ball.style.display = round ? 'grid' : 'none';
+    const ballVisible = Boolean(round && round.phase !== RHYTHM_PHASE.FINISHED);
+    ball.hidden = !ballVisible;
+    ball.style.display = ballVisible ? 'grid' : 'none';
     ball.style.left = trackPosition(game.getBallPosition());
     ball.style.setProperty('--rhythm-ball-color', round?.color ?? '#ff8038');
+    ball.classList.toggle('is-ready', round?.phase === RHYTHM_PHASE.SPAWN_READY);
+    ball.classList.toggle('is-paused', state.mode === 'PAUSED');
+    const isRoundResolved = round?.phase === RHYTHM_PHASE.RESOLVED || round?.phase === RHYTHM_PHASE.FINISHED;
+    track.classList.toggle('is-resolved', isRoundResolved);
+    if (state.rhythmLaunchSerial !== lastRhythmLaunchSerial) {
+      lastRhythmLaunchSerial = state.rhythmLaunchSerial;
+      if (round?.launchSerial === state.rhythmLaunchSerial) {
+        ball.classList.remove('is-launching');
+        void ball.offsetWidth;
+        ball.classList.add('is-launching');
+      }
+    }
     if (state.rhythmTapSerial !== lastRhythmTapSerial) {
       lastRhythmTapSerial = state.rhythmTapSerial;
       ball.classList.remove('is-tapping');
@@ -1353,13 +1613,63 @@ export function createUI(onAction) {
     if (state.rhythmFeedbackSerial !== lastRhythmFeedbackSerial) {
       lastRhythmFeedbackSerial = state.rhythmFeedbackSerial;
       track.classList.remove('is-rhythm-hit', 'is-rhythm-miss');
+      track.classList.remove('is-feedback-active');
       void track.offsetWidth;
       track.classList.add(state.rhythmFeedbackKind === 'hit' ? 'is-rhythm-hit' : 'is-rhythm-miss');
+      if (isRoundResolved) track.classList.add('is-feedback-active');
     }
   }
 
   function render(state, game) {
-    byId('game').dataset.debuff = state.debuff?.type ?? 'NONE';
+    gameRoot.dataset.debuff = state.debuff?.type ?? 'NONE';
+    const activeMode = state.mode === 'PAUSED' ? state.resumeMode : state.mode;
+    const isEventWarning = activeMode === 'EVENT_WARNING';
+    const isMonsterEntrance = activeMode === 'MONSTER_ENTRANCE';
+    const isMonsterCast = activeMode === 'MONSTER_CAST';
+    const isMonsterImpact = activeMode === 'MONSTER_IMPACT';
+    const isAttackToDebuffDelay = activeMode === 'ATTACK_TO_DEBUFF_DELAY';
+    const isDebuffReveal = activeMode === 'DEBUFF_REVEAL';
+    const isDebuffToAnswerDelay = activeMode === 'DEBUFF_TO_ANSWER_DELAY';
+    const isAnswerPreview = activeMode === 'ANSWER_PREVIEW';
+    const isMonsterQte = activeMode === 'MONSTER_QTE' && Boolean(state.activeQte);
+    const isCombat = activeMode.startsWith('COMBAT_') && Boolean(state.activeMonster);
+    const isCombatAttack = activeMode === 'COMBAT_ATTACK';
+    const isCombatDefense = activeMode === 'COMBAT_DEFENSE' && Boolean(state.combatDefenseRound);
+    const isMonsterPresentation = isMonsterEntrance || isMonsterCast || isMonsterImpact || isAttackToDebuffDelay ||
+      isDebuffReveal || isDebuffToAnswerDelay || isAnswerPreview;
+    const isMonsterEventSequence = isEventWarning || isMonsterPresentation || isMonsterQte || isCombat;
+    const warningOpacity = isEventWarning ? eventWarningOpacity(state) : 0;
+    gameRoot.classList.toggle('is-event-warning', isEventWarning);
+    gameRoot.classList.toggle('is-game-paused', state.mode === 'PAUSED');
+    gameRoot.style.setProperty('--event-warning-opacity', warningOpacity.toFixed(3));
+    gameRoot.style.setProperty('--monster-impact-duration', GAME_CONFIG.monsterImpactEffectDurationMs + 'ms');
+    const wasCasting = qteLayer.classList.contains('is-casting');
+    qteLayer.classList.toggle('is-entrance', isMonsterEntrance);
+    qteLayer.classList.toggle('is-casting', isMonsterCast);
+    qteLayer.classList.toggle('is-impact', isMonsterImpact);
+    qteLayer.classList.toggle('is-debuff-reveal', isDebuffReveal);
+    qteLayer.classList.toggle('is-debuff-delay', isDebuffToAnswerDelay);
+    qteLayer.classList.toggle('is-answer-preview', isAnswerPreview);
+    qteLayer.classList.toggle('is-active', isMonsterQte);
+    qteLayer.classList.toggle('is-combat', isCombat);
+    qteLayer.classList.toggle('is-combat-attack-intro', activeMode === 'COMBAT_ATTACK_INTRO');
+    qteLayer.classList.toggle('is-combat-attack', activeMode === 'COMBAT_ATTACK');
+    qteLayer.classList.toggle('is-combat-defense-intro', activeMode === 'COMBAT_DEFENSE_INTRO');
+    qteLayer.classList.toggle('is-combat-defense', activeMode === 'COMBAT_DEFENSE');
+    qteLayer.classList.toggle('is-combat-defense-success', activeMode === 'COMBAT_DEFENSE_SUCCESS');
+    qteLayer.classList.toggle('is-combat-defense-failed', activeMode === 'COMBAT_DEFENSE_FAILED');
+    qteLayer.classList.toggle('is-combat-victory', activeMode === 'COMBAT_VICTORY');
+    qteLayer.classList.toggle('is-paused', state.mode === 'PAUSED');
+    qteLayer.style.setProperty('--monster-entrance-duration', GAME_CONFIG.monsterEntranceDurationMs + 'ms');
+    qteLayer.style.setProperty('--monster-cast-duration', GAME_CONFIG.monsterCastDurationMs + 'ms');
+    qteLayer.style.setProperty('--combat-attack-duration', GAME_CONFIG.combatPlayerAttackDurationMs + 'ms');
+    qteLayer.style.setProperty('--combat-shield-duration', GAME_CONFIG.combatDefenseResultDurationMs + 'ms');
+    qteLayer.dataset.debuff = state.activeMonster?.failureDebuff?.type ?? 'NONE';
+    if (isMonsterCast && !wasCasting) {
+      qteLayer.style.setProperty('--monster-cast-delay', -Math.max(0, state.eventPhaseElapsedMs) + 'ms');
+    } else if (!isMonsterCast) {
+      qteLayer.style.removeProperty('--monster-cast-delay');
+    }
     const sceneView = state.stairViewMode === STAIR_VIEW_MODE.POINT_ZERO ? 'point-zero' : 'point-five';
     const visibleView = sceneView;
     const isAutoClimbing = state.mode === 'CLIMBING' && !state.isLandingPaused && !state.isTurning;
@@ -1439,12 +1749,15 @@ export function createUI(onAction) {
     updateRhythmTrack(state, game);
     track.classList.toggle('is-blurred', state.debuff?.type === 'BLUR');
     arena.classList.toggle('is-danger', state.feedback?.kind === 'danger');
-    arena.classList.toggle('is-qte', state.mode === 'MONSTER_QTE');
+    arena.classList.toggle('is-qte', isEventWarning || isMonsterPresentation || isMonsterQte || isCombat);
+    arena.classList.toggle('is-event-paused', state.mode === 'PAUSED' && isMonsterEventSequence);
+    gameRoot.classList.toggle('is-event-paused', state.mode === 'PAUSED' && isMonsterEventSequence);
     arena.classList.toggle('debuff-sore', state.debuff?.type === 'SORE');
     arena.classList.toggle('debuff-blur', state.debuff?.type === 'BLUR');
     arena.classList.toggle('debuff-fatigue', state.debuff?.type === 'FATIGUE');
-    hitButton.disabled = state.mode !== 'CLIMBING';
-    hitButton.classList.toggle('is-ready', state.mode === 'CLIMBING');
+    const acceptsRhythmInput = (state.mode === 'CLIMBING' || state.mode === 'COMBAT_ATTACK') && state.rhythmRound?.phase === RHYTHM_PHASE.MOVING;
+    hitButton.disabled = !acceptsRhythmInput;
+    hitButton.classList.toggle('is-ready', acceptsRhythmInput);
     hitButton.setAttribute('aria-label', '依照節奏踩拍');
     pauseButton.disabled = state.mode === 'MENU' || state.mode === 'RESULT';
     pauseButton.textContent = state.mode === 'PAUSED' ? '▶' : 'Ⅱ';
@@ -1472,7 +1785,9 @@ export function createUI(onAction) {
       byId('combo-stamp-value').textContent = String(state.combo);
     }
 
-    if (state.debuff) {
+    const isDebuffEncounterVisible = state.monsterDebuffApplied &&
+      (isDebuffReveal || isDebuffToAnswerDelay || isAnswerPreview || isMonsterQte);
+    if (state.debuff && (!state.activeMonster || isDebuffEncounterVisible)) {
       const data = GAME_CONFIG.debuffs[state.debuff.type];
       debuffCard.hidden = false;
       byId('debuff-icon').textContent = data.icon;
@@ -1482,15 +1797,73 @@ export function createUI(onAction) {
     } else {
       debuffCard.hidden = true;
     }
+    debuffCard.classList.toggle('is-event-reveal', isDebuffReveal);
+    debuffCard.classList.toggle('is-qte-overlay', isDebuffEncounterVisible);
+
+    if (state.monsterImpactSerial > lastMonsterImpactSerial) {
+      lastMonsterImpactSerial = state.monsterImpactSerial;
+      gameRoot.classList.remove('is-monster-impact');
+      void gameRoot.offsetWidth;
+      gameRoot.classList.add('is-monster-impact');
+      climber.classList.remove('is-monster-hit');
+      void climber.offsetWidth;
+      climber.classList.add('is-monster-hit');
+    } else if (state.monsterImpactSerial < lastMonsterImpactSerial) {
+      lastMonsterImpactSerial = state.monsterImpactSerial;
+    }
+
+    purifyFrame.style.setProperty('--debuff-cure-flash-duration', GAME_CONFIG.debuffCureFlashDurationMs + 'ms');
+    purifyFrame.style.setProperty('--debuff-cure-flash-count', String(GAME_CONFIG.debuffCureFlashCount));
+    if (state.debuffCureSerial > lastDebuffCureSerial) {
+      lastDebuffCureSerial = state.debuffCureSerial;
+      purifyFrame.classList.remove('is-active');
+      void purifyFrame.offsetWidth;
+      purifyFrame.classList.add('is-active');
+    } else if (state.debuffCureSerial < lastDebuffCureSerial) {
+      lastDebuffCureSerial = state.debuffCureSerial;
+    }
 
     climber.classList.toggle('is-falling', state.feedback?.kind === 'danger');
 
-    if (state.mode === 'MONSTER_QTE' && state.activeQte) {
+    if (isMonsterPresentation && state.activeMonster) {
+      let presence = qteLayer.querySelector('.monster-presence');
+      if (!presence || (isMonsterEntrance && !presence.classList.contains('is-descending'))) {
+        buildMonsterEntrance(state.activeMonster, state.eventPhaseElapsedMs, state.monsterHp, state.monsterMaxHp);
+        presence = qteLayer.querySelector('.monster-presence');
+      }
+      if (presence && !isMonsterEntrance && presence.classList.contains('is-descending')) {
+        presence.classList.remove('is-descending');
+        presence.classList.add('is-settled');
+      }
+      if (isAnswerPreview) showAnswerPreview(state.preparedQte);
+      else qteLayer.querySelector('.answer-preview')?.remove();
+      updateCombatVitals(state);
+      qteLayer.hidden = false;
+    } else if (isMonsterQte && state.activeQte) {
       qteLayer.hidden = false;
       updateQte(state.activeQte);
+      updateCombatVitals(state);
+    } else if (isCombat && state.activeMonster) {
+      if (lastCombatMonsterId !== state.activeMonster.id) {
+        lastCombatMonsterId = state.activeMonster.id;
+        lastCombatAttackSerial = state.combatAttackSerial;
+        lastCombatDamageFlashSerial = state.combatDamageFlashSerial;
+        lastCombatViewMode = null;
+      }
+      if (lastCombatViewMode !== activeMode) buildCombatView(state, activeMode);
+      qteLayer.hidden = false;
+      updateCombatVitals(state);
+      if (isCombatDefense) updateCombatDefenseRound(state.combatDefenseRound);
+      if (isCombatAttack) triggerCombatAttackAnimation(state);
+      triggerCombatDefenseHitFlash(state);
     } else {
       qteLayer.hidden = true;
+      qteLayer.classList.remove('is-combat-hit-flash');
       lastQteObject = null;
+      lastCombatViewMode = null;
+      lastCombatMonsterId = null;
+      lastCombatAttackSerial = state.combatAttackSerial;
+      lastCombatDamageFlashSerial = state.combatDamageFlashSerial;
     }
     showModal(state);
     syncAntiDizzinessSetting(state);
@@ -1515,9 +1888,38 @@ export function createUI(onAction) {
     onAction('rhythm');
   });
   hitButton.addEventListener('click', (event) => event.preventDefault());
+  track.addEventListener('animationend', (event) => {
+    if (event.target !== track || !['rhythm-hit-flash', 'rhythm-miss-shake'].includes(event.animationName)) return;
+    track.classList.remove('is-rhythm-hit', 'is-rhythm-miss', 'is-feedback-active');
+  });
+  climber.addEventListener('animationend', (event) => {
+    if (event.animationName === 'monster-player-impact') climber.classList.remove('is-monster-hit');
+  });
+  purifyFrame.addEventListener('animationend', (event) => {
+    if (event.animationName === 'debuff-cure-frame') purifyFrame.classList.remove('is-active');
+  });
+  gameRoot.addEventListener('animationend', (event) => {
+    if (event.target === gameRoot && event.animationName === 'monster-impact-vignette') {
+      gameRoot.classList.remove('is-monster-impact');
+    }
+  });
   qteLayer.addEventListener('click', (event) => {
     const tileId = event.target.closest('[data-tile-id]')?.dataset.tileId;
     if (tileId) onAction('qte-letter', tileId);
+    const shieldId = event.target.closest('[data-shield-id]')?.dataset.shieldId;
+    if (shieldId) onAction('combat-shield', shieldId);
+  });
+  qteLayer.addEventListener('animationend', (event) => {
+    if (event.target.matches('.player-attack-projectile') && event.animationName === 'player-attack-flight') {
+      const monster = qteLayer.querySelector('.monster-presence');
+      if (!monster) return;
+      monster.classList.remove('is-combat-hit');
+      void monster.offsetWidth;
+      monster.classList.add('is-combat-hit');
+    }
+    if (event.target === qteLayer && event.animationName === 'combat-red-edge-hit') {
+      qteLayer.classList.remove('is-combat-hit-flash');
+    }
   });
 
   return { render };
