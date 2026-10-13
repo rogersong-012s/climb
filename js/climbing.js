@@ -5,7 +5,10 @@ export function applyHit(state) {
   state.combo += 1;
   state.stats.hits += 1;
   state.stats.maxCombo = Math.max(state.stats.maxCombo, state.combo);
-  state.climbSpeed = Math.min(GAME_CONFIG.maxClimbSpeed, state.climbSpeed + GAME_CONFIG.hitSpeedBonus);
+  const maxClimbSpeed = Number.isFinite(state.maxClimbSpeed)
+    ? state.maxClimbSpeed
+    : GAME_CONFIG.maxClimbSpeed;
+  state.climbSpeed = Math.min(maxClimbSpeed, state.climbSpeed + GAME_CONFIG.hitSpeedBonus);
   return { climbSpeed: state.climbSpeed };
 }
 

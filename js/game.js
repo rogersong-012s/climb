@@ -5,7 +5,7 @@ import { scheduleMonsterEvents, firstCrossedMonsterEvent } from './events.js';
 import { applyDebuff, applySolutionEffect, consumeDebuffDistance } from './effects.js';
 import { chooseMonster } from './monsters.js';
 import { clickQteTile, createQte } from './qte.js';
-import { createRhythmRound, currentRhythmWindow, isCurrentRhythmHit, rhythmHitWindows, rhythmRoundDurationMs, rhythmRoundProgress, RHYTHM_PHASE } from './rhythm.js';
+import { createRhythmRound, currentRhythmWindow, isCurrentRhythmHit, rhythmHitWindows, rhythmRoundDurationMs, rhythmRoundProgress, rhythmWindowForIndex, RHYTHM_PHASE } from './rhythm.js';
 import { stairNodeAt } from './stairs.js';
 
 const MONSTER_EVENT_PHASES = new Set([
@@ -29,6 +29,7 @@ function freshState(bestTimeMs = null, antiDizzinessMode = ANTI_DIZZINESS_MODE.O
     stairNodeProgress: stairNode.nodeProgress,
     stairSegmentIndex: stairNode.segmentIndex,
     climbSpeed: GAME_CONFIG.initialClimbSpeed,
+    maxClimbSpeed: GAME_CONFIG.maxClimbSpeed,
     stepPhase: 0,
     pendingMonsterEvent: null,
     activeMonsterEvent: null,
@@ -60,6 +61,10 @@ function freshState(bestTimeMs = null, antiDizzinessMode = ANTI_DIZZINESS_MODE.O
     combo: 0,
     rhythmRound: null,
     rhythmRoundSerial: 0,
+    unlockedRhythmTypes: ['RED', 'BLUE'],
+    collectedRhythmOrbs: [],
+    rhythmOrbCollectSerial: 0,
+    rhythmOrbFeedback: null,
     rhythmTapSerial: 0,
     rhythmFeedbackSerial: 0,
     rhythmFeedbackKind: null,
@@ -105,10 +110,10 @@ function timeToClimbDistance(distance, speed) {
   return timeToMinimum + (distance - distanceBeforeMinimum) / minimum;
 }
 
-function platformTransitionDurationsForSpeed(speed) {
+function platformTransitionDurationsForSpeed(speed, maxSpeed = GAME_CONFIG.maxClimbSpeed) {
   const referenceSpeed = GAME_CONFIG.turnReferenceSpeed;
   const safeSpeed = Math.min(
-    GAME_CONFIG.maxClimbSpeed,
+    maxSpeed,
     Math.max(GAME_CONFIG.minClimbSpeed, speed)
   );
   const ratio = referenceSpeed / safeSpeed;
@@ -149,6 +154,7 @@ export function createGame(options = {}) {
   let rhythmTapSerial = 0;
   let rhythmFeedbackSerial = 0;
   let rhythmLaunchSerial = 0;
+  let lastRhythmInputTimerMs = -Infinity;
   const listeners = new Set();
 
   function notify() {
@@ -189,8 +195,49 @@ export function createGame(options = {}) {
       random,
       state.rhythmRoundSerial,
       rhythmBeatDurationForCurrentDebuff(),
-      rhythmPrepareDurationForCurrentDebuff()
+      rhythmPrepareDurationForCurrentDebuff(),
+      state.unlockedRhythmTypes,
+      GAME_CONFIG.rhythmTypeWeights
     );
+  }
+
+  function collectRhythmOrb(orb) {
+    if (!orb || state.collectedRhythmOrbs.includes(orb.id) || state.unlockedRhythmTypes.includes(orb.typeId)) return false;
+    state.collectedRhythmOrbs.push(orb.id);
+    state.unlockedRhythmTypes.push(orb.typeId);
+    state.rhythmOrbCollectSerial += 1;
+    state.rhythmOrbFeedback = {
+      id: orb.id,
+      typeId: orb.typeId,
+      floor: orb.floor,
+      platformAnchor: orb.platformAnchor ?? GAME_CONFIG.rhythmOrbPlatformAnchor,
+      sceneProgress: 1,
+      collectUntilMs: state.timerMs + GAME_CONFIG.rhythmOrbCollectAnimationMs,
+      toastUntilMs: state.timerMs + GAME_CONFIG.rhythmOrbUnlockToastMs
+    };
+
+    // If a new round was prepared in the same long frame that reached the orb,
+    // let that still-stationary ball draw from the newly unlocked pool as well.
+    const round = state.rhythmRound;
+    if (round?.phase === RHYTHM_PHASE.SPAWN_READY) {
+      const replacement = createRhythmRound(
+        random,
+        round.id,
+        round.beatDurationMs,
+        round.readyDurationMs,
+        state.unlockedRhythmTypes,
+        GAME_CONFIG.rhythmTypeWeights
+      );
+      replacement.readyElapsedMs = round.readyElapsedMs;
+      state.rhythmRound = replacement;
+    }
+    return true;
+  }
+
+  function nextRhythmOrbAfter(progress) {
+    return GAME_CONFIG.rhythmOrbUnlocks
+      .filter((orb) => !state.collectedRhythmOrbs.includes(orb.id) && orb.floor > progress + 1e-8)
+      .sort((a, b) => a.floor - b.floor)[0] ?? null;
   }
 
   function triggerRhythmFeedback(kind) {
@@ -198,33 +245,67 @@ export function createGame(options = {}) {
     state.rhythmFeedbackKind = kind;
   }
 
-  function failRhythmRound() {
-    const round = state.rhythmRound;
-    if (!round || round.phase !== RHYTHM_PHASE.MOVING) return;
-    if (state.mode === 'COMBAT_ATTACK') setFeedback(UI_TEXT.combatAttackMiss, 'miss');
-    else {
-      applyMiss(state);
+  function finishRhythmTargets(round) {
+    if (round.resolvedHits.some((result) => result === null) || round.phase !== RHYTHM_PHASE.MOVING) return false;
+    const successCount = round.resolvedHits.filter((result) => result === 'success').length;
+    const isPerfect = successCount === round.hitBeats.length;
+    round.phase = RHYTHM_PHASE.RESOLVED;
+    round.resolvedKind = isPerfect ? 'hit' : 'miss';
+    round.successCount = successCount;
+
+    if (state.mode === 'COMBAT_ATTACK') {
+      setFeedback('攻擊節奏 ' + successCount + '/' + round.hitBeats.length, isPerfect ? 'hit' : 'miss');
+      return true;
+    }
+
+    if (isPerfect) {
+      applyHit(state);
+      setFeedback(UI_TEXT.hit, 'hit');
+    } else {
+      if (!round.missApplied) {
+        applyMiss(state);
+        round.missApplied = true;
+      }
       setFeedback(UI_TEXT.miss, 'miss');
     }
-    round.phase = RHYTHM_PHASE.RESOLVED;
-    round.resolvedKind = 'miss';
-    triggerRhythmFeedback('miss');
+    return true;
   }
 
-  function completeRhythmRound() {
-    const round = state.rhythmRound;
-    if (!round || round.phase !== RHYTHM_PHASE.MOVING) return null;
-    let result = null;
-    if (state.mode === 'COMBAT_ATTACK') {
-      setFeedback(UI_TEXT.combatAttackHit, 'hit');
-    } else {
-      result = applyHit(state);
-      setFeedback(UI_TEXT.hit, 'hit');
+  function syncRhythmInputIndex(round) {
+    const nextIndex = round.resolvedHits.findIndex((result) => result === null);
+    round.inputIndex = nextIndex < 0 ? round.hitBeats.length : nextIndex;
+  }
+
+  function applyRhythmMiss(round) {
+    if (state.mode === 'CLIMBING' && !round.missApplied) {
+      applyMiss(state);
+      round.missApplied = true;
     }
-    round.phase = RHYTHM_PHASE.RESOLVED;
-    round.resolvedKind = 'hit';
+  }
+
+  function resolveRhythmTarget(round, targetIndex) {
+    if (!round || round.phase !== RHYTHM_PHASE.MOVING ||
+        targetIndex < 0 || targetIndex >= round.hitBeats.length ||
+        round.resolvedHits[targetIndex] !== null) return false;
+    round.resolvedHits[targetIndex] = 'success';
+    round.successCount = round.resolvedHits.filter((result) => result === 'success').length;
+    syncRhythmInputIndex(round);
+    setFeedback('拍點 ' + round.successCount + '/' + round.hitBeats.length, 'neutral');
     triggerRhythmFeedback('hit');
-    return result;
+    finishRhythmTargets(round);
+    return true;
+  }
+
+  function expireRhythmTarget(round, targetIndex) {
+    if (!round || round.phase !== RHYTHM_PHASE.MOVING || round.resolvedHits[targetIndex] !== null) return false;
+    round.resolvedHits[targetIndex] = 'missed';
+    round.missedCount = (round.missedCount ?? 0) + 1;
+    syncRhythmInputIndex(round);
+    applyRhythmMiss(round);
+    setFeedback(state.mode === 'COMBAT_ATTACK' ? '攻擊拍點失誤' : UI_TEXT.miss, 'miss');
+    triggerRhythmFeedback('miss');
+    finishRhythmTargets(round);
+    return true;
   }
 
   function applyPendingCombatDamage() {
@@ -235,35 +316,46 @@ export function createGame(options = {}) {
   }
 
   function finishCombatAttackRound(round) {
+    const totalCount = round.hitBeats.length;
+    const successCount = round.resolvedHits.filter((result) => result === 'success').length;
+    const isPerfect = totalCount > 0 && successCount === totalCount;
+    // Perfect rounds defer all damage until the rapid-tap run completes, so
+    // the base damage is included exactly once with the tap bonus.
+    state.combatPendingDamage = isPerfect ? 0 : totalCount > 0
+      ? Math.round(GAME_CONFIG.combatBaseAttackDamage * (successCount / totalCount))
+      : 0;
     state.rhythmRound = null;
-    if (round.resolvedKind === 'hit') beginCombatRapidTap();
-    else beginCombatDefenseIntro();
+    beginCombatRapidTap(isPerfect);
   }
 
-  function beginCombatRapidTap() {
+  function beginCombatRapidTap(enabled = false) {
     if (!state.activeMonster || (state.monsterHp ?? 0) <= 0) {
       beginCombatVictory();
       return;
     }
     state.rhythmRound = null;
     state.combatRapidTap = {
-      prepareRemainingMs: GAME_CONFIG.combatRapidTapPrepareDelayMs,
       elapsedMs: 0,
-      durationMs: GAME_CONFIG.combatRapidTapDurationMs / GAME_CONFIG.rhythmMoveSpeedMultiplier,
-      tapCount: 0
+      durationMs: enabled
+        ? GAME_CONFIG.combatRapidTapDurationMs / GAME_CONFIG.rhythmMoveSpeedMultiplier
+        : GAME_CONFIG.combatRapidTapDisabledDurationMs,
+      prepareRemainingMs: enabled ? GAME_CONFIG.combatRapidTapPrepareDelayMs : 0,
+      tapCount: 0,
+      disabled: !enabled
     };
     state.mode = 'COMBAT_RAPID_TAP';
-    setFeedback(UI_TEXT.combatRapidTapPrompt, 'hit');
+    setFeedback(enabled ? '快速連打！' : UI_TEXT.combatRapidTapDisabled, enabled ? 'hit' : 'neutral');
   }
 
   function finishCombatRapidTap() {
     const rapidTap = state.combatRapidTap;
     if (!rapidTap || state.mode !== 'COMBAT_RAPID_TAP') return;
-    const damage = GAME_CONFIG.combatRapidTapBaseDamage +
-      rapidTap.tapCount * GAME_CONFIG.combatRapidTapDamageMultiplier;
+    if (!rapidTap.disabled) {
+      state.combatPendingDamage = GAME_CONFIG.combatBaseAttackDamage +
+        rapidTap.tapCount * GAME_CONFIG.combatRapidTapDamageMultiplier;
+    }
     state.combatRapidTap = null;
-    state.combatPendingDamage = damage;
-    setFeedback('DMG ' + damage, 'hit');
+    setFeedback('DMG ' + state.combatPendingDamage, 'hit');
     enterMonsterPhase('COMBAT_ATTACK_SETTLE', GAME_CONFIG.combatPlayerAttackDurationMs);
   }
 
@@ -271,19 +363,15 @@ export function createGame(options = {}) {
     const rapidTap = state.combatRapidTap;
     if (!rapidTap || state.mode !== 'COMBAT_RAPID_TAP') return Math.max(0, deltaMs);
     let remainingMs = Math.max(0, deltaMs);
-    if (rapidTap.prepareRemainingMs > 0) {
-      const preparedMs = Math.min(remainingMs, rapidTap.prepareRemainingMs);
-      rapidTap.prepareRemainingMs -= preparedMs;
-      remainingMs -= preparedMs;
-    }
-    if (rapidTap.prepareRemainingMs <= 1e-6 && remainingMs > 0) {
-      const movingMs = Math.min(remainingMs, Math.max(0, rapidTap.durationMs - rapidTap.elapsedMs));
-      rapidTap.elapsedMs += movingMs;
-      remainingMs -= movingMs;
-      if (rapidTap.elapsedMs + 1e-6 >= rapidTap.durationMs) {
-        rapidTap.elapsedMs = rapidTap.durationMs;
-        finishCombatRapidTap();
-      }
+    const prepareElapsedMs = Math.min(remainingMs, Math.max(0, rapidTap.prepareRemainingMs));
+    rapidTap.prepareRemainingMs = Math.max(0, rapidTap.prepareRemainingMs - prepareElapsedMs);
+    remainingMs -= prepareElapsedMs;
+    const elapsedMs = Math.min(remainingMs, Math.max(0, rapidTap.durationMs - rapidTap.elapsedMs));
+    rapidTap.elapsedMs += elapsedMs;
+    remainingMs -= elapsedMs;
+    if (rapidTap.elapsedMs + 1e-6 >= rapidTap.durationMs) {
+      rapidTap.elapsedMs = rapidTap.durationMs;
+      finishCombatRapidTap();
     }
     return remainingMs;
   }
@@ -324,6 +412,10 @@ export function createGame(options = {}) {
       elapsedMs: 0,
       durationMs: attacks.reduce((latest, attack) => Math.max(latest, attack.attackTimeMs), 0),
       resolvedCount: 0,
+      shieldCracked: false,
+      shieldCrackAttackId: null,
+      shieldCrackImpactAtMs: null,
+      shieldCrackClearAtMs: null,
       failed: false
     };
   }
@@ -359,7 +451,7 @@ export function createGame(options = {}) {
       }
     });
 
-    round.attacks.forEach((attack) => {
+    round.attacks.forEach((attack, attackIndex) => {
       if (attack.status === 'scheduled' && elapsedMs >= attack.windowStartMs) {
         attack.status = 'active';
       }
@@ -371,10 +463,26 @@ export function createGame(options = {}) {
       } else {
         attack.status = 'missed';
         round.failed = true;
+        const nextAttack = round.attacks[attackIndex + 1];
+        round.shieldCracked = true;
+        round.shieldCrackAttackId = attack.id;
+        round.shieldCrackImpactAtMs = attack.attackTimeMs;
+        // Keep the crack through the next vortex cue; restore the shield as its next
+        // defense window opens, immediately before the shield lights up.
+        // A final-shot crack has no clear time and remains until the defense round exits.
+        round.shieldCrackClearAtMs = nextAttack ? nextAttack.windowStartMs : null;
       }
       state.combatDefenseImpactSerial += 1;
       round.resolvedCount += 1;
     });
+
+    if (round.shieldCracked && round.shieldCrackClearAtMs !== null &&
+        elapsedMs >= round.shieldCrackClearAtMs) {
+      round.shieldCracked = false;
+      round.shieldCrackAttackId = null;
+      round.shieldCrackImpactAtMs = null;
+      round.shieldCrackClearAtMs = null;
+    }
 
     if (round.resolvedCount >= round.attacks.length) {
       if (round.failed) beginCombatDefenseFailure();
@@ -447,24 +555,40 @@ export function createGame(options = {}) {
         continue;
       }
 
-      const window = currentRhythmWindow(round, currentHitZoneWidth());
-      const untilMissMs = window ? Math.max(0, window.endMs - round.elapsedMs) : Infinity;
-      if (window && untilMissMs < untilFinishMs - 1e-6 && remainingMs > untilMissMs + 1e-6) {
-        round.elapsedMs += untilMissMs;
-        remainingMs -= untilMissMs;
-        failRhythmRound();
+      const nextTargetIndex = round.resolvedHits.findIndex((result) => result === null);
+      if (nextTargetIndex < 0) {
+        finishRhythmTargets(round);
         continue;
       }
-      if (remainingMs < untilFinishMs - 1e-6) {
+      round.inputIndex = nextTargetIndex;
+      const window = rhythmWindowForIndex(round, currentHitZoneWidth(), nextTargetIndex);
+      const untilMissMs = window ? Math.max(0, window.endMs - round.elapsedMs) : Infinity;
+      const nextBoundaryMs = Math.min(untilMissMs, untilFinishMs);
+      if (remainingMs + 1e-6 < nextBoundaryMs) {
         round.elapsedMs += remainingMs;
         remainingMs = 0;
         break;
       }
 
-      round.elapsedMs = durationMs;
-      remainingMs = Math.max(0, remainingMs - untilFinishMs);
-      if (round.phase === RHYTHM_PHASE.MOVING) failRhythmRound();
-      finishRhythmRound(round);
+      round.elapsedMs += nextBoundaryMs;
+      remainingMs = Math.max(0, remainingMs - nextBoundaryMs);
+      if (window && round.elapsedMs + 1e-6 >= window.endMs) {
+        expireRhythmTarget(round, nextTargetIndex);
+      }
+      if (round.elapsedMs + 1e-6 >= durationMs) {
+        round.elapsedMs = durationMs;
+        while (round.phase === RHYTHM_PHASE.MOVING) {
+          const openIndex = round.resolvedHits.findIndex((result) => result === null);
+          if (openIndex < 0) {
+            finishRhythmTargets(round);
+            break;
+          }
+          expireRhythmTarget(round, openIndex);
+        }
+        finishRhythmRound(round);
+        continue;
+      }
+      if (remainingMs <= 1e-6) break;
     }
     return remainingMs;
   }
@@ -529,7 +653,7 @@ export function createGame(options = {}) {
       return true;
     }
 
-    const transitionDurations = platformTransitionDurationsForSpeed(state.climbSpeed);
+    const transitionDurations = platformTransitionDurationsForSpeed(state.climbSpeed, state.maxClimbSpeed);
     state.isLandingPaused = true;
     state.landingPauseDurationMs = transitionDurations.pauseMs;
     state.landingPauseRemainingMs = transitionDurations.pauseMs;
@@ -608,6 +732,7 @@ export function createGame(options = {}) {
     state.rhythmTapSerial = rhythmTapSerial;
     state.rhythmFeedbackSerial = rhythmFeedbackSerial;
     state.rhythmLaunchSerial = rhythmLaunchSerial;
+    lastRhythmInputTimerMs = -Infinity;
 
     if (effectResult.debuffCured && state.activeMonster) {
       state.combatDefenseRound = null;
@@ -699,6 +824,15 @@ export function createGame(options = {}) {
   }
 
   function beginCombatVictory() {
+    const event = state.activeMonsterEvent;
+    if (state.activeMonster && (state.monsterHp ?? 1) <= 0 && event && !event.defeatRewardGranted) {
+      event.defeatRewardGranted = true;
+      state.maxClimbSpeed += GAME_CONFIG.monsterDefeatMaxSpeedBonus;
+      state.climbSpeed = Math.min(
+        state.maxClimbSpeed,
+        state.climbSpeed + GAME_CONFIG.monsterDefeatSpeedBonus
+      );
+    }
     state.combatDefenseRound = null;
     state.rhythmRound = null;
     state.combatRapidTap = null;
@@ -841,6 +975,7 @@ export function createGame(options = {}) {
     state.rhythmTapSerial = rhythmTapSerial;
     state.rhythmFeedbackSerial = rhythmFeedbackSerial;
     state.rhythmLaunchSerial = rhythmLaunchSerial;
+    lastRhythmInputTimerMs = -Infinity;
     startNextRhythmRound();
     previousFrameTime = Number.isFinite(timestamp) ? timestamp : null;
     notify();
@@ -857,50 +992,62 @@ export function createGame(options = {}) {
     return { status: 'defended', attackId: attack.id };
   }
 
+  function pressCombatRapidTap() {
+    const rapidTap = state.combatRapidTap;
+    if (!rapidTap || rapidTap.disabled || rapidTap.prepareRemainingMs > 0 ||
+        rapidTap.elapsedMs >= rapidTap.durationMs) return { status: 'ignored' };
+    rapidTap.tapCount += 1;
+    state.rhythmTapSerial = ++rhythmTapSerial;
+    setFeedback('連打 ×' + rapidTap.tapCount, 'hit');
+    notify();
+    return { status: 'tap', tapCount: rapidTap.tapCount };
+  }
+
   function pressRhythm(timestamp = globalThis.performance?.now?.()) {
     const modeBeforeUpdate = state.mode;
     const roundBeforeUpdate = state.rhythmRound;
-    const rapidTapBeforeUpdate = state.combatRapidTap;
-    const previousFeedbackSerial = state.rhythmFeedbackSerial;
     if (previousFrameTime !== null && Number.isFinite(timestamp)) update(timestamp);
     if (state.mode !== modeBeforeUpdate) return { status: 'ignored' };
 
     if (modeBeforeUpdate === 'COMBAT_DEFENSE') return tryDefendCentralShield();
-    if (modeBeforeUpdate === 'COMBAT_RAPID_TAP') {
-      const rapidTap = state.combatRapidTap;
-      if (!rapidTap || rapidTap !== rapidTapBeforeUpdate || rapidTap.prepareRemainingMs > 1e-6 ||
-          rapidTap.elapsedMs >= rapidTap.durationMs) return { status: 'ignored' };
-      rapidTap.tapCount += 1;
-      state.rhythmTapSerial = ++rhythmTapSerial;
-      setFeedback('TAP × ' + rapidTap.tapCount, 'hit');
-      notify();
-      return { status: 'tapped', tapCount: rapidTap.tapCount };
-    }
+    if (modeBeforeUpdate === 'COMBAT_RAPID_TAP') return pressCombatRapidTap();
     if (modeBeforeUpdate !== 'CLIMBING' && modeBeforeUpdate !== 'COMBAT_ATTACK') return { status: 'ignored' };
-    if (state.rhythmFeedbackSerial !== previousFeedbackSerial && state.rhythmFeedbackKind === 'miss') {
-      return { status: 'missed-window' };
-    }
     // A press that advances the old ball to its endpoint must not spill into
     // the newly spawned ball, even if a long frame also consumed its ready beat.
     if (state.rhythmRound !== roundBeforeUpdate) return { status: 'ignored' };
     const round = state.rhythmRound;
     if (!round || round.phase !== RHYTHM_PHASE.MOVING) return { status: 'ignored' };
+    if (round.inputLocked) return { status: 'ignored' };
+    if (round.pressCount >= round.hitBeats.length) {
+      round.inputLocked = true;
+      setFeedback('本輪按鍵額度已用完', 'neutral');
+      notify();
+      return { status: 'locked', pressCount: round.pressCount, pressLimit: round.hitBeats.length };
+    }
+    if (state.timerMs - lastRhythmInputTimerMs < GAME_CONFIG.rhythmInputDebounceMs) {
+      return { status: 'debounced' };
+    }
+    lastRhythmInputTimerMs = state.timerMs;
+    round.pressCount += 1;
     state.rhythmTapSerial = ++rhythmTapSerial;
-    if (!isBallInZone()) {
-      failRhythmRound();
-      notify();
-      return { status: 'miss' };
+    const wasInWindow = isBallInZone();
+    if (wasInWindow) {
+      resolveRhythmTarget(round, round.inputIndex);
+    } else {
+      round.failedPressCount = (round.failedPressCount ?? 0) + 1;
+      applyRhythmMiss(round);
+      setFeedback(state.mode === 'COMBAT_ATTACK' ? '攻擊拍點失誤' : UI_TEXT.miss, 'miss');
+      triggerRhythmFeedback('miss');
     }
-
-    round.inputIndex += 1;
-    if (round.inputIndex >= round.hitBeats.length) {
-      const result = completeRhythmRound();
-      notify();
-      return { status: 'hit', ...result };
-    }
-    setFeedback('拍點 ' + round.inputIndex + '/' + round.hitBeats.length, 'neutral');
     notify();
-    return { status: 'progress', inputIndex: round.inputIndex, totalInputs: round.hitBeats.length };
+    return {
+      status: wasInWindow ? (round.phase === RHYTHM_PHASE.RESOLVED && round.resolvedKind === 'hit' ? 'hit' : 'progress') : 'miss',
+      inputIndex: round.inputIndex,
+      totalInputs: round.hitBeats.length,
+      successCount: round.successCount,
+      pressCount: round.pressCount,
+      pressLimit: round.hitBeats.length
+    };
   }
 
   function pressQteLetter(tileId, timestamp = globalThis.performance?.now?.()) {
@@ -1063,6 +1210,7 @@ export function createGame(options = {}) {
       const nextMonsterEvent = state.monsterEvents
         .filter((event) => !event.triggered && event.floor > previousProgress + 1e-8)
         .sort((first, second) => first.floor - second.floor)[0] ?? null;
+      const nextRhythmOrb = nextRhythmOrbAfter(previousProgress);
       const debuffEndProgress = state.debuff && state.debuff.remainingFloors > 1e-8
         ? previousProgress + state.debuff.remainingFloors
         : Infinity;
@@ -1070,6 +1218,7 @@ export function createGame(options = {}) {
         GAME_CONFIG.maxFloor,
         nextNodeProgress,
         nextMonsterEvent?.floor ?? Infinity,
+        nextRhythmOrb?.floor ?? Infinity,
         debuffEndProgress
       );
       const distanceToBoundary = Math.max(0, boundary - previousProgress);
@@ -1095,6 +1244,9 @@ export function createGame(options = {}) {
         crossedEvent.triggered = true;
         state.pendingMonsterEvent = crossedEvent;
       }
+      if (nextRhythmOrb && Math.abs(boundary - nextRhythmOrb.floor) <= 1e-8) {
+        collectRhythmOrb(nextRhythmOrb);
+      }
 
       if (boundary >= GAME_CONFIG.maxFloor - 1e-8) {
         state.progress = GAME_CONFIG.maxFloor;
@@ -1112,6 +1264,9 @@ export function createGame(options = {}) {
     }
 
     if (state.feedback && state.timerMs >= state.feedback.untilMs) state.feedback = null;
+    if (state.rhythmOrbFeedback && state.timerMs >= state.rhythmOrbFeedback.toastUntilMs) {
+      state.rhythmOrbFeedback = null;
+    }
     notify();
   }
 

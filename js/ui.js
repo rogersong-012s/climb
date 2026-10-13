@@ -1,4 +1,4 @@
-import { ANTI_DIZZINESS_MODE, GAME_CONFIG, UI_TEXT } from './config.js';
+import { ANTI_DIZZINESS_MODE, GAME_CONFIG, RHYTHM_TYPES, UI_TEXT } from './config.js';
 import { formatStairProgress, stairSegmentProgress, STAIR_VIEW_MODE } from './stairs.js';
 import { RHYTHM_PHASE } from './rhythm.js';
 
@@ -1050,6 +1050,7 @@ export function createUI(onAction) {
   const trackZones = byId('track-zones');
   const rhythmLabel = byId('rhythm-label');
   const ball = byId('rhythm-ball');
+  track.style.setProperty('--rhythm-hit-flash-duration', GAME_CONFIG.rhythmHitFlashDurationMs + 'ms');
   const feedback = byId('feedback');
   const bestValue = byId('best-value');
   const debuffCard = byId('debuff-card');
@@ -1061,6 +1062,9 @@ export function createUI(onAction) {
   const gameRoot = byId('game');
   const arena = byId('arena');
   const climber = byId('climber');
+  const rhythmOrbScene = byId('rhythm-orb-scene');
+  const rhythmOrb = byId('rhythm-orb');
+  const rhythmOrbToast = byId('rhythm-orb-toast');
   const sceneA = byId('scene-a');
   const sceneB = byId('scene-b');
   const sceneStairs = byId('scene-stairs');
@@ -1079,6 +1083,7 @@ export function createUI(onAction) {
   let lastRhythmTapSerial = 0;
   let lastRhythmFeedbackSerial = 0;
   let lastRhythmLaunchSerial = 0;
+  let lastRhythmOrbCollectSerial = 0;
   let lastMonsterImpactSerial = 0;
   let lastDebuffCureSerial = 0;
   let lastCombatViewMode = null;
@@ -1323,7 +1328,8 @@ export function createUI(onAction) {
       'aria-label="' + (round.shieldColor === 'red' ? '紅盾，防禦兩次攻擊' : '藍盾，防禦三次攻擊') + '">' +
       '<svg viewBox="0 0 48 56" aria-hidden="true"><path d="M24 3 43 10v15c0 13-8 22-19 28C13 47 5 38 5 25V10z"/></svg>' +
       '<svg class="defense-shield-cracks" viewBox="0 0 48 56" aria-hidden="true" hidden>' +
-      '<path d="M24 27 19 20 22 15 16 9 M19 20 12 21 8 16 M24 27 29 21 26 15 31 10 M29 21 37 22 40 17 M24 27 19 33 22 39 17 47 M19 33 11 32 8 37 M24 27 30 33 27 40 33 47 M30 33 37 31 40 37"/>' +
+      '<path class="defense-crack-outline" d="M24 27 20 21 22 16 17 11 M20 21 14 22 10 18 M24 27 28 21 26 15 31 10 M28 21 35 22 39 18 M24 27 18 26 13 24 8 26 M13 24 11 20 M24 27 30 27 36 25 40 28 M36 25 39 22 M24 27 20 33 22 39 17 46 M20 33 14 31 10 36 M24 27 28 33 26 39 31 46 M28 33 35 31 39 36"/>' +
+      '<path class="defense-crack-core" d="M24 27 20 21 22 16 17 11 M20 21 14 22 10 18 M24 27 28 21 26 15 31 10 M28 21 35 22 39 18 M24 27 18 26 13 24 8 26 M13 24 11 20 M24 27 30 27 36 25 40 28 M36 25 39 22 M24 27 20 33 22 39 17 46 M20 33 14 31 10 36 M24 27 28 33 26 39 31 46 M28 33 35 31 39 36"/>' +
       '</svg>' +
       '<b>×' + round.attackCount + '</b></div>';
     const vortex = showVortex
@@ -1481,31 +1487,28 @@ export function createUI(onAction) {
     shield.classList.toggle('is-blocked', blocked);
     shield.classList.toggle('is-missed', missed);
     shield.classList.toggle('is-complete', round.resolvedCount >= round.attackCount);
-    const crackDurationMs = GAME_CONFIG.combatDefenseShieldCrackDurationMs;
-    const crackAttack = shots
-      .filter((attack) => attack.status === 'missed' && nowMs >= attack.attackTimeMs &&
-        nowMs - attack.attackTimeMs < crackDurationMs)
-      .sort((first, second) => second.attackTimeMs - first.attackTimeMs)[0];
+    const crackAttack = round.shieldCracked
+      ? shots.find((attack) => attack.id === round.shieldCrackAttackId)
+      : null;
     const cracks = shield.querySelector('.defense-shield-cracks');
     if (cracks) {
-      cracks.hidden = !crackAttack;
-      shield.classList.toggle('is-cracked', Boolean(crackAttack));
-      if (crackAttack && cracks.dataset.attackId !== crackAttack.id) {
+      const isCracked = Boolean(crackAttack);
+      const crackAgeMs = isCracked ? Math.max(0, nowMs - round.shieldCrackImpactAtMs) : 0;
+      const impactDurationMs = GAME_CONFIG.combatDefenseShieldImpactReactionDurationMs;
+      cracks.hidden = !isCracked;
+      cracks.classList.toggle('is-active', isCracked);
+      shield.classList.toggle('is-cracked', isCracked);
+      shield.classList.toggle('is-crack-impact', isCracked && crackAgeMs < impactDurationMs);
+      if (isCracked && cracks.dataset.attackId !== crackAttack.id) {
         cracks.dataset.attackId = crackAttack.id;
-        const crackAgeMs = Math.max(0, nowMs - crackAttack.attackTimeMs);
-        shield.style.setProperty('--combat-defense-shield-crack-duration', crackDurationMs + 'ms');
-        shield.style.animationDelay = '-' + crackAgeMs + 'ms';
-        cracks.style.animationDelay = '-' + crackAgeMs + 'ms';
-        cracks.classList.remove('is-active');
+        shield.style.setProperty('--combat-defense-shield-impact-duration', impactDurationMs + 'ms');
+        shield.style.animationDelay = '-' + Math.min(crackAgeMs, impactDurationMs) + 'ms';
         void cracks.offsetWidth;
-        cracks.classList.add('is-active');
-      } else if (!crackAttack && cracks.dataset.attackId) {
+      } else if (!isCracked && cracks.dataset.attackId) {
         delete cracks.dataset.attackId;
-        cracks.classList.remove('is-active');
-        shield.style.removeProperty('--combat-defense-shield-crack-duration');
+        shield.classList.remove('is-crack-impact');
+        shield.style.removeProperty('--combat-defense-shield-impact-duration');
         shield.style.removeProperty('animation-delay');
-        cracks.style.removeProperty('--combat-defense-shield-crack-duration');
-        cracks.style.removeProperty('animation-delay');
       }
     }
     shield.setAttribute('aria-label', (round.shieldColor === 'red' ? '紅盾，' : '藍盾，') +
@@ -1652,8 +1655,7 @@ export function createUI(onAction) {
     const round = state.rhythmRound;
     const rapidTap = activeMode === 'COMBAT_RAPID_TAP' ? state.combatRapidTap : null;
     const windows = game.getRhythmHitWindows();
-    const ballScale = rapidTap ? GAME_CONFIG.combatRapidTapBallScale : 1;
-    const ballDiameter = 25 * ballScale;
+    const ballDiameter = 25;
     const ballRadius = ballDiameter / 2;
     const edgeInset = ballRadius + GAME_CONFIG.rhythmBallEdgeGapPx;
     const trackPosition = (progress) => 'calc(' + (progress * 100) + '% + ' + (edgeInset - 2 * edgeInset * progress) + 'px)';
@@ -1675,15 +1677,23 @@ export function createUI(onAction) {
       ball.style.setProperty('--rhythm-ready-ring-end-scale', String(1 / ringScale));
     }
 
-    if (rapidTap) {
-      rhythmLabel.textContent = 'TAP × ' + rapidTap.tapCount;
+    if (rapidTap?.disabled) {
+      rhythmLabel.textContent = '連打已停用';
+      rhythmLabel.classList.remove('is-rapid-tap-counter', 'is-tap-pop');
+      rhythmLabel.classList.add('is-rapid-tap-disabled');
+    } else if (rapidTap) {
+      rhythmLabel.textContent = '連打 ×' + rapidTap.tapCount;
+      rhythmLabel.classList.remove('is-rapid-tap-disabled', 'is-tap-pop');
       rhythmLabel.classList.add('is-rapid-tap-counter');
     } else if (round) {
-      rhythmLabel.classList.remove('is-rapid-tap-counter', 'is-tap-pop');
-      rhythmLabel.textContent = (activeMode === 'COMBAT_ATTACK' ? '攻擊回合 · ' : '') +
-        round.label + ' · ' + round.inputIndex + '/' + round.hitBeats.length;
+      rhythmLabel.classList.remove('is-rapid-tap-counter', 'is-rapid-tap-disabled', 'is-tap-pop');
+      rhythmLabel.textContent = round.inputLocked
+        ? '按鍵額度已用完'
+        : (activeMode === 'COMBAT_ATTACK' ? '攻擊回合 · ' : '') +
+          round.label + ' · ' + round.successCount + '/' + round.hitBeats.length;
+      if (round.inputLocked) rhythmLabel.classList.add('is-rapid-tap-disabled');
     } else {
-      rhythmLabel.classList.remove('is-rapid-tap-counter', 'is-tap-pop');
+      rhythmLabel.classList.remove('is-rapid-tap-counter', 'is-rapid-tap-disabled', 'is-tap-pop');
       const rhythmModeLabels = {
         COMBAT_ATTACK_INTRO: '準備攻擊',
         COMBAT_RAPID_TAP: '連打輸出',
@@ -1699,26 +1709,32 @@ export function createUI(onAction) {
       marker.style.left = trackPosition(window.center);
       marker.style.width = 'calc(' + (window.width * 100) + '% - ' + (2 * edgeInset * window.width) + 'px)';
       marker.classList.toggle('is-current', window.status === 'current');
-      marker.classList.toggle('is-complete', window.status === 'complete');
+      marker.classList.toggle('is-complete', window.status === 'success');
+      marker.classList.toggle('is-fail', window.status === 'fail');
+      marker.classList.toggle('is-missed', window.status === 'missed');
       marker.classList.toggle('is-locked', window.status === 'locked');
       marker.dataset.status = window.status;
     });
 
-    const ballVisible = Boolean((round && round.phase !== RHYTHM_PHASE.FINISHED) || rapidTap);
+    const rapidTapActive = Boolean(rapidTap && !rapidTap.disabled);
+    const ballVisible = Boolean((round && round.phase !== RHYTHM_PHASE.FINISHED) || rapidTapActive);
     ball.hidden = !ballVisible;
     ball.style.display = ballVisible ? 'grid' : 'none';
-    const ballProgress = rapidTap
+    const ballProgress = rapidTapActive
       ? rapidTap.elapsedMs / Math.max(1, rapidTap.durationMs)
       : game.getBallPosition();
     ball.style.left = trackPosition(ballProgress);
-    ball.style.setProperty('--rhythm-ball-color', round?.color ?? '#ff8038');
-    ball.style.setProperty('--rhythm-ball-scale', String(ballScale));
+    ball.style.setProperty('--rhythm-ball-color', rapidTapActive ? '#ffd166' : round?.color ?? '#ff8038');
+    ball.style.setProperty('--rhythm-ball-scale', String(GAME_CONFIG.combatRapidTapBallScale));
     ball.classList.toggle('is-ready', round?.phase === RHYTHM_PHASE.SPAWN_READY);
     ball.classList.toggle('is-paused', state.mode === 'PAUSED');
-    ball.classList.toggle('is-rapid-tap-ball', Boolean(rapidTap));
-    track.classList.toggle('is-rapid-tap', Boolean(rapidTap));
+    ball.classList.toggle('is-rapid-tap-ball', rapidTapActive);
+    track.classList.toggle('is-rapid-tap', rapidTapActive);
+    track.classList.toggle('is-rapid-tap-disabled', Boolean(rapidTap?.disabled));
     const isRoundResolved = round?.phase === RHYTHM_PHASE.RESOLVED || round?.phase === RHYTHM_PHASE.FINISHED;
-    track.classList.toggle('is-resolved', isRoundResolved);
+    track.classList.toggle('is-input-locked', Boolean(round?.inputLocked));
+    track.classList.toggle('is-resolved', isRoundResolved || Boolean(round?.inputLocked));
+    if (round?.inputLocked) track.classList.remove('is-rhythm-hit', 'is-rhythm-miss', 'is-feedback-active');
     if (state.rhythmLaunchSerial !== lastRhythmLaunchSerial) {
       lastRhythmLaunchSerial = state.rhythmLaunchSerial;
       if (round?.launchSerial === state.rhythmLaunchSerial) {
@@ -1745,6 +1761,59 @@ export function createUI(onAction) {
       void track.offsetWidth;
       track.classList.add(state.rhythmFeedbackKind === 'hit' ? 'is-rhythm-hit' : 'is-rhythm-miss');
       if (isRoundResolved) track.classList.add('is-feedback-active');
+    }
+  }
+
+  function updateRhythmOrb(state, sceneProgress) {
+    const activeMode = state.mode === 'PAUSED' ? state.resumeMode : state.mode;
+    const collect = state.rhythmOrbFeedback;
+    const isCollecting = Boolean(collect && state.timerMs < collect.collectUntilMs);
+    const toastIsVisible = Boolean(collect && state.timerMs < collect.toastUntilMs);
+    rhythmOrb.style.setProperty('--rhythm-orb-collect-duration', GAME_CONFIG.rhythmOrbCollectAnimationMs + 'ms');
+    rhythmOrbToast.style.setProperty('--rhythm-orb-toast-duration', GAME_CONFIG.rhythmOrbUnlockToastMs + 'ms');
+    if (state.rhythmOrbCollectSerial !== lastRhythmOrbCollectSerial) {
+      lastRhythmOrbCollectSerial = state.rhythmOrbCollectSerial;
+      rhythmOrb.classList.remove('is-collecting');
+      rhythmOrbToast.classList.remove('is-visible');
+      void rhythmOrb.offsetWidth;
+      if (isCollecting) rhythmOrb.classList.add('is-collecting');
+      if (toastIsVisible) rhythmOrbToast.classList.add('is-visible');
+    }
+
+    const collected = new Set(state.collectedRhythmOrbs ?? []);
+    const approachRange = GAME_CONFIG.rhythmOrbApproachRangeFloors;
+    const upcoming = activeMode === 'CLIMBING' && !state.isLandingPaused && !state.isTurning
+      ? GAME_CONFIG.rhythmOrbUnlocks
+        .filter((orb) => !collected.has(orb.id) && orb.floor >= state.progress - 1e-8)
+        .sort((a, b) => a.floor - b.floor)[0] ?? null
+      : null;
+    const distance = upcoming ? Math.max(0, upcoming.floor - state.progress) : Infinity;
+    const approaching = Boolean(upcoming && distance <= approachRange && !isCollecting);
+    const visibleOrb = isCollecting ? collect : approaching ? upcoming : null;
+    const visibleType = visibleOrb ? RHYTHM_TYPES[visibleOrb.typeId] : null;
+    const anchor = visibleOrb?.platformAnchor ?? GAME_CONFIG.rhythmOrbPlatformAnchor;
+    const orbTransform = 'translate(' + anchor.x + ' ' + anchor.y + ')';
+    if (rhythmOrb.getAttribute('transform') !== orbTransform) rhythmOrb.setAttribute('transform', orbTransform);
+    if (visibleType) {
+      rhythmOrb.style.setProperty('--rhythm-orb-color', visibleType.color);
+      rhythmOrbScene.style.setProperty('--rhythm-orb-color', visibleType.color);
+    }
+    rhythmOrb.setAttribute('visibility', visibleOrb ? 'visible' : 'hidden');
+    rhythmOrbScene.style.setProperty('--rhythm-orb-collect-duration', GAME_CONFIG.rhythmOrbCollectAnimationMs + 'ms');
+    setSceneProgress(rhythmOrbScene, isCollecting
+      ? collect.sceneProgress ?? sceneProgress
+      : sceneProgress);
+    rhythmOrb.classList.toggle('is-collecting', isCollecting);
+
+    if (toastIsVisible) {
+      const type = RHYTHM_TYPES[collect.typeId];
+      rhythmOrbToast.textContent = '獲得新節奏光球';
+      rhythmOrbToast.style.setProperty('--rhythm-orb-color', type.color);
+      rhythmOrbToast.hidden = false;
+      rhythmOrbToast.classList.add('is-visible');
+    } else {
+      rhythmOrbToast.hidden = true;
+      rhythmOrbToast.classList.remove('is-visible');
     }
   }
 
@@ -1810,6 +1879,7 @@ export function createUI(onAction) {
     arena.dataset.segment = String(state.stairSegmentIndex);
     arena.dataset.view = visibleView;
     arena.classList.toggle('is-turning', state.isTurning);
+    arena.classList.toggle('is-paused', state.mode === 'PAUSED');
     arena.classList.toggle('is-simple-turn', isSimpleTurning);
     arena.classList.toggle('is-landing-paused', state.isLandingPaused);
     const accessibleSceneView = isSimpleTurning && turnProgress >= 0.5
@@ -1877,6 +1947,7 @@ export function createUI(onAction) {
     speedNumber.textContent = state.climbSpeed.toFixed(3);
 
     updateRhythmTrack(state, game);
+    updateRhythmOrb(state, sceneProgress);
     track.classList.toggle('is-blurred', state.debuff?.type === 'BLUR');
     arena.classList.toggle('is-danger', state.feedback?.kind === 'danger');
     arena.classList.toggle('is-qte', isEventWarning || isMonsterPresentation || isMonsterQte || isCombat);

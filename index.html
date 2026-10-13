@@ -224,6 +224,29 @@
         <path fill="#fffdf7" opacity=".86" d="M0 143H600V147H0Z"/>
           </g>
         </svg>
+        <svg id="rhythm-orb-scene" class="stairwell rhythm-orb-scene" viewBox="0 0 700 1000" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+          <defs>
+            <radialGradient id="rhythm-orb-aura">
+              <stop offset="0" stop-color="var(--rhythm-orb-color)" stop-opacity=".48"/>
+              <stop offset=".52" stop-color="var(--rhythm-orb-color)" stop-opacity=".22"/>
+              <stop offset="1" stop-color="var(--rhythm-orb-color)" stop-opacity="0"/>
+            </radialGradient>
+            <radialGradient id="rhythm-orb-core" cx="34%" cy="28%" r="78%">
+              <stop offset="0" stop-color="#fff9e8" stop-opacity=".88"/>
+              <stop offset=".3" stop-color="var(--rhythm-orb-color)" stop-opacity=".84"/>
+              <stop offset="1" stop-color="var(--rhythm-orb-color)" stop-opacity=".7"/>
+            </radialGradient>
+          </defs>
+          <g id="rhythm-orb" class="rhythm-orb" style="--rhythm-orb-color:#f2ca3e" visibility="hidden" transform="translate(350 340)">
+            <g class="rhythm-orb-visual">
+              <circle class="rhythm-orb-aura" r="62" fill="url(#rhythm-orb-aura)"/>
+              <circle class="rhythm-orb-inner-glow" r="36" fill="var(--rhythm-orb-color)" opacity=".2"/>
+              <circle class="rhythm-orb-core" r="24" fill="url(#rhythm-orb-core)"/>
+              <circle r="24" fill="none" stroke="#fff8e8" stroke-width="1.6" opacity=".27"/>
+              <ellipse class="rhythm-orb-sheen" cx="-7" cy="-9" rx="7" ry="4.2" fill="#fff8e8" opacity=".44"/>
+            </g>
+          </g>
+        </svg>
         </div>
         <canvas class="turn-scene" id="turn-scene" aria-hidden="true"></canvas>
         <div class="scene-motion-lines" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
@@ -238,6 +261,7 @@
           <b class="debuff-count"><i id="debuff-remaining"></i>F</b>
         </div>
         <div class="climber" id="climber" aria-hidden="true"><span class="shoe shoe-left"></span><span class="shoe shoe-right"></span></div>
+        <div class="rhythm-orb-toast" id="rhythm-orb-toast" aria-live="polite" hidden></div>
 
         <section class="qte-layer" id="qte-layer" aria-live="polite" aria-label="樓梯間中的怪物快速反應事件" hidden></section>
       </section>

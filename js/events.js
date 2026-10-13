@@ -3,13 +3,20 @@ import { GAME_CONFIG } from './config.js';
 function legalPositionsForRange(range) {
   const fractions = GAME_CONFIG.monsterEventFractions;
   const positions = [];
-  const firstFloor = Math.floor(range.min);
-  const lastFloor = Math.ceil(range.max);
+  // Each five-floor band excludes its starting integer floor, but includes
+  // candidates on the ending integer floor. The next band then starts after
+  // that shared boundary, so no integer floor becomes the first candidate twice.
+  const integerBoundaries = Number.isInteger(range.min) && Number.isInteger(range.max);
+  const firstFloor = integerBoundaries ? range.min + 1 : Math.floor(range.min);
+  const lastFloor = integerBoundaries ? range.max : Math.ceil(range.max) - 1;
 
-  for (let floor = firstFloor; floor < lastFloor; floor += 1) {
+  for (let floor = firstFloor; floor <= lastFloor; floor += 1) {
     for (const fraction of fractions) {
       const position = Number((floor + fraction).toFixed(1));
-      if (position >= range.min && position < range.max) positions.push(position);
+      const inRange = integerBoundaries
+        ? floor <= range.max
+        : position >= range.min && position < range.max;
+      if (inRange && position < GAME_CONFIG.maxFloor) positions.push(position);
     }
   }
 
@@ -17,7 +24,9 @@ function legalPositionsForRange(range) {
   // treat its floor as the start of a five-floor interval while still selecting
   // one of the supported .2/.7 positions.
   if (positions.length === 0 && range.min === range.max) {
-    return fractions.map((fraction) => Number((range.min + fraction).toFixed(1)));
+    return fractions
+      .map((fraction) => Number((range.min + fraction).toFixed(1)))
+      .filter((position) => position < GAME_CONFIG.maxFloor);
   }
   return positions;
 }

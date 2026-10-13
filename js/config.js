@@ -1,6 +1,8 @@
 const startFloor = 1;
 const maxFloor = 101;
 const monsterEventIntervalFloors = 5;
+const purpleBaseTotalBeats = 7;
+const purpleBaseHitBeats = Object.freeze([0.5, 1, 2.5, 3, 3.5, 5, 5.5, 6]);
 const monsterEventFloors = Object.freeze(Array.from(
   { length: Math.ceil((maxFloor - startFloor) / monsterEventIntervalFloors) },
   (_, index) => Object.freeze({
@@ -8,6 +10,7 @@ const monsterEventFloors = Object.freeze(Array.from(
     max: Math.min(startFloor + (index + 1) * monsterEventIntervalFloors, maxFloor)
   })
 ));
+const rhythmOrbPlatformAnchor = Object.freeze({ x: 350, y: 256 });
 
 export const GAME_CONFIG = Object.freeze({
   startFloor,
@@ -16,6 +19,8 @@ export const GAME_CONFIG = Object.freeze({
   minClimbSpeed: 0.1,
   maxClimbSpeed: 0.3,
   hitSpeedBonus: 0.02,
+  monsterDefeatSpeedBonus: 0.01,
+  monsterDefeatMaxSpeedBonus: 0.015,
   speedDecay: 0.005,
   stepCycleDistanceFloors: 0.1,
   basePlatformPauseDurationMs: 100,
@@ -29,11 +34,25 @@ export const GAME_CONFIG = Object.freeze({
   fatigueMinHitZoneWidth: 0.14,
   rhythmBeatDurationMs: 500,
   rhythmMoveSpeedMultiplier: 1.3,
+  rhythmInputDebounceMs: 70,
+  rhythmHitFlashDurationMs: 150,
   rhythmPrepareBeats: 2,
   rhythmReadyRingStartScale: 1.9,
   rhythmReadyFlashMs: 100,
   rhythmRespawnDelayMs: 100,
+  purpleRhythmStartOffsetBeats: 1,
   rhythmBallEdgeGapPx: 12,
+  rhythmOrbApproachRangeFloors: 0.5,
+  rhythmOrbCollectAnimationMs: 420,
+  rhythmOrbUnlockToastMs: 2000,
+  rhythmOrbPlatformAnchor,
+  rhythmOrbUnlocks: Object.freeze([
+    Object.freeze({ id: 'rhythm-yellow-16', floor: 16, typeId: 'YELLOW', platformAnchor: rhythmOrbPlatformAnchor }),
+    Object.freeze({ id: 'rhythm-green-36', floor: 36, typeId: 'GREEN', platformAnchor: rhythmOrbPlatformAnchor }),
+    Object.freeze({ id: 'rhythm-purple-61', floor: 61, typeId: 'PURPLE', platformAnchor: rhythmOrbPlatformAnchor })
+  ]),
+  // Keep weights centralized so future rhythm types can be tuned without changing selection logic.
+  rhythmTypeWeights: Object.freeze({ RED: 1, BLUE: 1, YELLOW: 1, GREEN: 1, PURPLE: 1 }),
   monsterQteDurationMs: 6000,
   monsterMaxHp: 100,
   combatRoundIntroDurationMs: 800,
@@ -41,7 +60,7 @@ export const GAME_CONFIG = Object.freeze({
   combatDefenseHitWindowMs: 300,
   combatDefenseLaserDurationMs: 220,
   combatDefenseHitEffectDurationMs: 360,
-  combatDefenseShieldCrackDurationMs: 120,
+  combatDefenseShieldImpactReactionDurationMs: 120,
   // Percent of the stairwell arena height; the UI clamps this above the rhythm controls.
   combatDefenseShieldY: 87,
   combatDefenseVortexY: 54,
@@ -53,11 +72,12 @@ export const GAME_CONFIG = Object.freeze({
   combatDefenseSuccessSplashDurationMs: 350,
   combatDefenseSuccessSplashOpacity: 0.22,
   combatDefenseResultDurationMs: 650,
+  combatRapidTapDisabledDurationMs: 500,
+  combatBaseAttackDamage: 20,
   combatRapidTapPrepareDelayMs: 100,
   combatRapidTapDurationMs: 2000,
-  combatRapidTapBallScale: 0.7,
-  combatRapidTapBaseDamage: 20,
   combatRapidTapDamageMultiplier: 2,
+  combatRapidTapBallScale: 0.7,
   combatDefensePatterns: Object.freeze([
     Object.freeze({
       id: 'RED',
@@ -102,7 +122,7 @@ export const GAME_CONFIG = Object.freeze({
   }
 });
 
-// Beat numbers are 1-based positions on a one-way track run.
+// Beat numbers are positions on a one-way track run; fractional beats are supported.
 export const RHYTHM_TYPES = Object.freeze({
   RED: Object.freeze({
     label: '紅球',
@@ -115,6 +135,27 @@ export const RHYTHM_TYPES = Object.freeze({
     color: '#4285F4',
     totalBeats: 5,
     hitBeats: Object.freeze([1, 3])
+  }),
+  YELLOW: Object.freeze({
+    label: '黃球',
+    color: '#F2D675',
+    totalBeats: 6,
+    hitBeats: Object.freeze([2.5, 3.5, 5, 5.5]),
+    unlockFloor: 16
+  }),
+  GREEN: Object.freeze({
+    label: '綠球',
+    color: '#39C77A',
+    totalBeats: 6,
+    hitBeats: Object.freeze([1, 2.5, 3, 4, 4.5]),
+    unlockFloor: 36
+  }),
+  PURPLE: Object.freeze({
+    label: '紫球',
+    color: '#9465EF',
+    totalBeats: purpleBaseTotalBeats + GAME_CONFIG.purpleRhythmStartOffsetBeats,
+    hitBeats: Object.freeze(purpleBaseHitBeats.map((beat) => beat + GAME_CONFIG.purpleRhythmStartOffsetBeats)),
+    unlockFloor: 61
   })
 });
 
@@ -168,7 +209,7 @@ export const UI_TEXT = Object.freeze({
   combatAttackMiss: '攻擊落空，準備防禦',
   combatAttackRound: '攻擊回合！',
   combatDefenseRound: '防禦回合！',
-  combatRapidTapPrompt: '連打輸出！',
+  combatRapidTapDisabled: '連打已停用',
   combatDefensePrompt: '按下操作鍵防禦',
   combatDefenseSuccess: '防禦成功',
   combatDefenseFailure: '防禦失敗',
