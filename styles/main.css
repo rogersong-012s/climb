@@ -1552,13 +1552,15 @@ h1 { letter-spacing: .06em; }
     text-overflow: ellipsis;
   }
   .feedback-pill {
-    width: 70%;
-    max-width: 70%;
+    width: fit-content;
+    max-width: 52%;
     min-width: 0;
     height: 22px;
-    flex: 0 1 70%;
+    flex: 0 0 auto;
+    margin-left: auto;
     padding: 3px 10px;
     line-height: 14px;
+    white-space: nowrap;
   }
   .rhythm-track {
     height: 43px;
