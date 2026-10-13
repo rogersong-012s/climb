@@ -34,6 +34,8 @@ export const GAME_CONFIG = Object.freeze({
   fatigueMinHitZoneWidth: 0.14,
   rhythmBeatDurationMs: 500,
   rhythmMoveSpeedMultiplier: 1.3,
+  perfectRhythmSpeedBurstBonus: 0.1,
+  perfectRhythmSpeedBurstDurationMs: 200,
   rhythmInputDebounceMs: 70,
   rhythmHitFlashDurationMs: 150,
   rhythmPrepareBeats: 2,
@@ -54,7 +56,8 @@ export const GAME_CONFIG = Object.freeze({
   // Keep weights centralized so future rhythm types can be tuned without changing selection logic.
   rhythmTypeWeights: Object.freeze({ RED: 1, BLUE: 1, YELLOW: 1, GREEN: 1, PURPLE: 1 }),
   monsterQteDurationMs: 6000,
-  monsterMaxHp: 100,
+  monsterBaseHp: 100,
+  monsterHpIncrement: 5,
   combatRoundIntroDurationMs: 800,
   combatDefenseVortexChargeDurationMs: 500,
   combatDefenseHitWindowMs: 300,
@@ -74,9 +77,13 @@ export const GAME_CONFIG = Object.freeze({
   combatDefenseResultDurationMs: 650,
   combatRapidTapDisabledDurationMs: 500,
   combatBaseAttackDamage: 20,
+  upgradeBaseAttackBonus: 5,
   combatRapidTapPrepareDelayMs: 100,
   combatRapidTapDurationMs: 2000,
   combatRapidTapDamageMultiplier: 2,
+  upgradeRapidTapDamageBonus: 0.6,
+  upgradeRhythmJudgmentBonus: 0.1,
+  upgradeChoiceCount: 2,
   combatRapidTapBallScale: 0.7,
   combatDefensePatterns: Object.freeze([
     Object.freeze({
@@ -105,9 +112,9 @@ export const GAME_CONFIG = Object.freeze({
   monsterEntranceDurationMs: 700,
   monsterCastDurationMs: 1000,
   monsterImpactEffectDurationMs: 340,
-  monsterAttackToDebuffDelayMs: 500,
+  monsterAttackToDebuffDelayMs: 250,
   monsterDebuffRevealDurationMs: 450,
-  monsterDebuffToAnswerDelayMs: 800,
+  monsterDebuffToAnswerDelayMs: 400,
   monsterAnswerPreviewDurationMs: 1800,
   debuffCureFlashDurationMs: 400,
   debuffCureFlashCount: 2,
@@ -163,6 +170,30 @@ export const ANTI_DIZZINESS_MODE = Object.freeze({
   OFF: 'OFF',
   ON: 'ON'
 });
+
+export const UPGRADE_CARDS = Object.freeze([
+  Object.freeze({
+    id: 'base-attack',
+    name: '基礎攻擊強化',
+    description: '基礎攻擊力 +' + GAME_CONFIG.upgradeBaseAttackBonus,
+    icon: '⚔',
+    accent: 'orange'
+  }),
+  Object.freeze({
+    id: 'rapid-tap-attack',
+    name: '連擊攻擊強化',
+    description: '每次連打傷害 +' + GAME_CONFIG.upgradeRapidTapDamageBonus.toFixed(1),
+    icon: 'ϟ',
+    accent: 'blue'
+  }),
+  Object.freeze({
+    id: 'rhythm-precision',
+    name: '節奏精準強化',
+    description: '節奏判定範圍 +' + Math.round(GAME_CONFIG.upgradeRhythmJudgmentBonus * 100) + '%',
+    icon: '◎',
+    accent: 'lime'
+  })
+]);
 
 export const UI_TEXT = Object.freeze({
   gameTitle: '登峰灶急',

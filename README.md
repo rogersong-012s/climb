@@ -1,37 +1,72 @@
 # 登峰灶急
 
-一頁式節奏判定 × QTE × 隨機怪物登頂遊戲。使用原生 HTML、CSS 與 JavaScript ES Modules，無框架、無後端；可直接發布到 GitHub Pages。
+《登峰灶急》（Stair Sprint · Taipei 101）是一款以節奏操作、第一人稱樓梯場景與怪物戰鬥為核心的瀏覽器遊戲。玩家從 1F 自動攀登至 101F，依節奏完成拍點來維持速度，並在途中收集新節奏、破解怪物事件及挑戰戰鬥。
 
-## 本機執行
+遊戲使用原生 HTML、CSS 與 JavaScript ES Modules，沒有前端框架或後端服務。樓梯場景以頁面內 SVG、CSS 與 Canvas 呈現，可部署為靜態網站。
 
-需要 Node.js 18 或更新版本。
+## 開始遊戲
 
-    npm start
+### 本機執行
 
-接著在瀏覽器開啟 http://localhost:8001。ES Modules 需要透過 HTTP 或 HTTPS 載入，不要用 file:// 開啟。
+需要 Node.js 18 或更新版本。在專案根目錄執行：
 
-## 測試
+```sh
+npm start
+```
 
-    npm test
+伺服器預設使用 `http://127.0.0.1:8001/`。也可以設定 `PORT` 使用其他連接埠。請透過 HTTP 開啟遊戲；直接以 `file://` 開啟無法載入 ES Modules。
 
-測試使用 Node.js 內建的 node:test，沒有額外套件。
+### 操作方式
 
-## 檔案結構
+- **電腦：**按 `Space` 踩拍；按 `Esc` 暫停或繼續。
+- **手機／觸控裝置：**點擊遊戲畫面操作，字母 QTE 則點選畫面上的字母。
+- **防禦回合：**在盾牌提示期間按 `Space` 或點擊遊戲畫面防禦。
 
-    index.html
-    styles/main.css
-    js/
-      config.js       遊戲數值、怪物事件樓層區間及 UI 文案
-      combo.js        COMBO 爬升量與判定區計算
-      events.js       怪物事件排程與跨樓層觸發
-      monsters.js     怪物、解法、擊退及 DEBUFF 資料
-      qte.js          亂序字母盤、多解法前綴判定與重置
-      effects.js      DEBUFF 生命週期及解法效果
-      climbing.js     命中、MISS、攀登與擊退狀態更新
-      game.js         遊戲狀態機、節奏、計時與事件協調
-      ui.js           DOM 呈現與輸入元件
-      main.js         瀏覽器事件及 requestAnimationFrame 迴圈
-    scripts/serve.mjs 本機靜態 HTTP 伺服器
-    tests/systems.test.js
+遊戲開始畫面與暫停選單都能切換「防暈模式」。設定會保存在瀏覽器的 `localStorage`；開啟時以簡易轉場取代第一人稱旋轉。
 
-GitHub Pages 從 repository root 發布即可。CSS、JavaScript 使用相對路徑，適用於專案子路徑。遊戲圖形是頁面內建 SVG 與 CSS，不依賴外部圖檔。
+## 遊戲流程
+
+1. 玩家持續自動向上攀登。初始速度為 `0.10 F/s`，一般速度範圍為 `0.10–0.30 F/s`。
+2. 節奏球沿軌道由左向右移動。依球的節奏完成全部拍點可增加速度與 COMBO；速度會以 `0.005 F/s²` 的幅度自然衰減。
+3. 樓梯在 `.0` 與 `.5` 樓層之間切換視角。預設播放兩段第一人稱左轉；防暈模式改用簡易轉場。
+4. 每個五層區間會隨機安排一個怪物事件，觸發位置在 `.2` 或 `.7` 樓層。事件包含警告、怪物入場、答案預告及字母 QTE。
+5. 遭遇中的後續流程依解法與結果進入戰鬥或恢復攀登。戰鬥包含節奏攻擊、快速連打，以及紅／藍漩渦雷射防禦。
+6. 黃球、綠球與紫球分別在 16F、36F 與 61F 的樓層光球解鎖；已解鎖節奏會加入後續抽選。
+
+遊戲時間、最佳紀錄與防暈模式設定保存在目前瀏覽器的本機儲存空間。不同瀏覽器或無痕視窗的資料彼此獨立。
+
+## 開發與測試
+
+```sh
+npm test
+```
+
+測試使用 Node.js 內建的 `node:test`，不需安裝額外套件。
+
+## 專案結構
+
+```text
+index.html              遊戲頁面、內嵌樓梯 SVG 與主要 UI 容器
+styles/main.css         版面、視覺樣式與動畫
+js/
+  main.js               建立遊戲與 UI、接收輸入、執行動畫影格
+  config.js             遊戲數值、節奏類型、怪物事件與 UI 文案
+  game.js               遊戲狀態、攀登、轉身、事件及戰鬥流程
+  rhythm.js             節奏資料、拍點窗口與球的時間進度
+  stairs.js             樓層節點、樓梯段落與視角資料
+  ui.js                 DOM 更新、Canvas 轉身場景與輸入介面
+  events.js             怪物事件排程與樓層跨越判定
+  monsters.js           怪物、解法與遭遇資料
+  qte.js                字母盤建立與答案判定
+  effects.js            DEBUFF 套用、消耗與解法效果
+  climbing.js           HIT、MISS、COMBO、速度與擊退處理
+  combo.js              COMBO 對節奏判定區寬度的影響
+scripts/serve.mjs       本機靜態 HTTP 開發伺服器
+tests/systems.test.js   Node.js 系統測試
+```
+
+主要平衡數值與可調整參數集中在 `js/config.js`；節奏球的顏色、拍數與 HIT 拍點也在同一檔案的 `RHYTHM_TYPES` 設定。
+
+## 部署
+
+此專案是靜態網站，可從 GitHub Pages 發布。將 repository root 設為 Pages 發布來源即可；HTML、CSS 與 JavaScript 使用相對路徑，支援部署在 repository 子路徑下。

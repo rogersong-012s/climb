@@ -1,4 +1,4 @@
-import { ANTI_DIZZINESS_MODE, GAME_CONFIG, UI_TEXT } from './config.js';
+import { ANTI_DIZZINESS_MODE, GAME_CONFIG, UI_TEXT, UPGRADE_CARDS } from './config.js';
 import { hitZoneWidthForCombo } from './combo.js';
 import { applyHit, applyMiss, knockBack } from './climbing.js';
 import { scheduleMonsterEvents, firstCrossedMonsterEvent } from './events.js';
@@ -17,7 +17,7 @@ const COMBAT_TIMED_PHASES = new Set([
   'COMBAT_DEFENSE_SUCCESS', 'COMBAT_DEFENSE_FAILED', 'COMBAT_VICTORY'
 ]);
 const COMBAT_MODES = new Set(['COMBAT_ATTACK', 'COMBAT_RAPID_TAP', 'COMBAT_DEFENSE', ...COMBAT_TIMED_PHASES]);
-const PAUSABLE_MODES = new Set(['CLIMBING', ...MONSTER_EVENT_PHASES, 'MONSTER_QTE', ...COMBAT_MODES]);
+const PAUSABLE_MODES = new Set(['CLIMBING', 'UPGRADE_SELECT', ...MONSTER_EVENT_PHASES, 'MONSTER_QTE', ...COMBAT_MODES]);
 
 function freshState(bestTimeMs = null, antiDizzinessMode = ANTI_DIZZINESS_MODE.OFF) {
   const stairNode = stairNodeAt(GAME_CONFIG.startFloor);
@@ -30,12 +30,20 @@ function freshState(bestTimeMs = null, antiDizzinessMode = ANTI_DIZZINESS_MODE.O
     stairSegmentIndex: stairNode.segmentIndex,
     climbSpeed: GAME_CONFIG.initialClimbSpeed,
     maxClimbSpeed: GAME_CONFIG.maxClimbSpeed,
+    temporarySpeedBonus: 0,
+    temporarySpeedBonusRemainingMs: 0,
     stepPhase: 0,
     pendingMonsterEvent: null,
     activeMonsterEvent: null,
     activeMonster: null,
     monsterHp: null,
     monsterMaxHp: null,
+    upgradeChoices: [],
+    runUpgrades: {
+      baseAttackDamage: GAME_CONFIG.combatBaseAttackDamage,
+      rapidTapDamage: GAME_CONFIG.combatRapidTapDamageMultiplier,
+      rhythmJudgmentLevel: 0
+    },
     combatDefenseRound: null,
     combatRapidTap: null,
     combatPendingDamage: 0,
@@ -94,8 +102,25 @@ function integrateClimbSpeed(speed, seconds) {
   return { speed: nextSpeed, distance };
 }
 
-function timeToClimbDistance(distance, speed) {
+function timeToClimbDistance(distance, speed, temporaryBonus = 0, bonusRemainingSeconds = 0) {
   if (distance <= 0) return 0;
+  if (temporaryBonus > 0 && bonusRemainingSeconds > 0) {
+    const bonusSeconds = Math.max(0, bonusRemainingSeconds);
+    const boostedDistance = integrateClimbSpeed(speed, bonusSeconds).distance + temporaryBonus * bonusSeconds;
+    if (distance <= boostedDistance) {
+      let low = 0;
+      let high = bonusSeconds;
+      for (let iteration = 0; iteration < 48; iteration += 1) {
+        const midpoint = (low + high) / 2;
+        const midpointDistance = integrateClimbSpeed(speed, midpoint).distance + temporaryBonus * midpoint;
+        if (midpointDistance < distance) low = midpoint;
+        else high = midpoint;
+      }
+      return (low + high) / 2;
+    }
+    const speedAfterBonus = integrateClimbSpeed(speed, bonusSeconds).speed;
+    return bonusSeconds + timeToClimbDistance(distance - boostedDistance, speedAfterBonus);
+  }
   const minimum = GAME_CONFIG.minClimbSpeed;
   const decay = GAME_CONFIG.speedDecay;
   if (decay <= 0) return distance / speed;
@@ -161,14 +186,38 @@ export function createGame(options = {}) {
     listeners.forEach((listener) => listener(state));
   }
 
+  function effectiveClimbSpeed() {
+    return state.climbSpeed + (state.temporarySpeedBonusRemainingMs > 0 ? state.temporarySpeedBonus : 0);
+  }
+
+  function clearTemporarySpeedBonus() {
+    state.temporarySpeedBonus = 0;
+    state.temporarySpeedBonusRemainingMs = 0;
+  }
+
+  function triggerPerfectClimbSpeedBurst() {
+    state.temporarySpeedBonus = GAME_CONFIG.perfectRhythmSpeedBurstBonus;
+    state.temporarySpeedBonusRemainingMs = GAME_CONFIG.perfectRhythmSpeedBurstDurationMs;
+  }
+
   function currentBallPosition() {
     return rhythmRoundProgress(state.rhythmRound);
   }
 
   function currentHitZoneWidth() {
     const effectiveMode = state.mode === 'PAUSED' ? state.resumeMode : state.mode;
-    if (effectiveMode === 'COMBAT_ATTACK') return hitZoneWidthForCombo(0, null);
-    return hitZoneWidthForCombo(state.combo, state.debuff?.type ?? null);
+    const judgmentMultiplier = 1 + state.runUpgrades.rhythmJudgmentLevel * GAME_CONFIG.upgradeRhythmJudgmentBonus;
+    if (effectiveMode === 'COMBAT_ATTACK') return hitZoneWidthForCombo(0, null, judgmentMultiplier);
+    return hitZoneWidthForCombo(state.combo, state.debuff?.type ?? null, judgmentMultiplier);
+  }
+
+  function drawUpgradeChoices() {
+    const pool = [...UPGRADE_CARDS];
+    for (let index = pool.length - 1; index > 0; index -= 1) {
+      const randomIndex = Math.min(index, Math.max(0, Math.floor(random() * (index + 1))));
+      [pool[index], pool[randomIndex]] = [pool[randomIndex], pool[index]];
+    }
+    return pool.slice(0, Math.min(GAME_CONFIG.upgradeChoiceCount, pool.length)).map((card) => card.id);
   }
 
   function rhythmBeatDurationForCurrentDebuff() {
@@ -260,6 +309,7 @@ export function createGame(options = {}) {
 
     if (isPerfect) {
       applyHit(state);
+      if (state.mode === 'CLIMBING') triggerPerfectClimbSpeedBurst();
       setFeedback(UI_TEXT.hit, 'hit');
     } else {
       if (!round.missApplied) {
@@ -310,7 +360,7 @@ export function createGame(options = {}) {
 
   function applyPendingCombatDamage() {
     if (state.combatPendingDamage <= 0) return;
-    const currentHp = state.monsterHp ?? state.monsterMaxHp ?? GAME_CONFIG.monsterMaxHp;
+    const currentHp = state.monsterHp ?? state.monsterMaxHp ?? GAME_CONFIG.monsterBaseHp;
     state.monsterHp = Math.max(0, currentHp - state.combatPendingDamage);
     state.combatPendingDamage = 0;
   }
@@ -322,7 +372,7 @@ export function createGame(options = {}) {
     // Perfect rounds defer all damage until the rapid-tap run completes, so
     // the base damage is included exactly once with the tap bonus.
     state.combatPendingDamage = isPerfect ? 0 : totalCount > 0
-      ? Math.round(GAME_CONFIG.combatBaseAttackDamage * (successCount / totalCount))
+      ? Math.round(state.runUpgrades.baseAttackDamage * (successCount / totalCount))
       : 0;
     state.rhythmRound = null;
     beginCombatRapidTap(isPerfect);
@@ -351,8 +401,9 @@ export function createGame(options = {}) {
     const rapidTap = state.combatRapidTap;
     if (!rapidTap || state.mode !== 'COMBAT_RAPID_TAP') return;
     if (!rapidTap.disabled) {
-      state.combatPendingDamage = GAME_CONFIG.combatBaseAttackDamage +
-        rapidTap.tapCount * GAME_CONFIG.combatRapidTapDamageMultiplier;
+      state.combatPendingDamage = Math.round(
+        state.runUpgrades.baseAttackDamage + rapidTap.tapCount * state.runUpgrades.rapidTapDamage
+      );
     }
     state.combatRapidTap = null;
     setFeedback('DMG ' + state.combatPendingDamage, 'hit');
@@ -597,7 +648,13 @@ export function createGame(options = {}) {
     const previousProgress = state.progress;
     const integrated = integrateClimbSpeed(state.climbSpeed, deltaMs / 1000);
     state.climbSpeed = Math.max(GAME_CONFIG.minClimbSpeed, integrated.speed);
-    const distance = exactDistance ?? integrated.distance;
+    const boostedMs = Math.min(deltaMs, state.temporarySpeedBonusRemainingMs);
+    const distance = exactDistance ?? integrated.distance +
+      (state.temporarySpeedBonusRemainingMs > 0
+        ? state.temporarySpeedBonus * boostedMs / 1000
+        : 0);
+    state.temporarySpeedBonusRemainingMs = Math.max(0, state.temporarySpeedBonusRemainingMs - deltaMs);
+    if (state.temporarySpeedBonusRemainingMs <= 0) state.temporarySpeedBonus = 0;
     state.progress = Math.min(GAME_CONFIG.maxFloor, previousProgress + distance);
     state.stepPhase = (state.stepPhase + distance / GAME_CONFIG.stepCycleDistanceFloors) % 1;
     advanceRhythm(deltaMs);
@@ -841,9 +898,9 @@ export function createGame(options = {}) {
   }
 
   function finishMonsterCombat() {
-    if (state.activeMonsterEvent) state.activeMonsterEvent.defeated = true;
+    const event = state.activeMonsterEvent;
+    if (event) event.defeated = true;
     state.activeMonster = null;
-    state.activeMonsterEvent = null;
     state.monsterHp = null;
     state.monsterMaxHp = null;
     state.combatDefenseRound = null;
@@ -851,9 +908,46 @@ export function createGame(options = {}) {
     state.combatPendingDamage = 0;
     state.eventPhaseElapsedMs = 0;
     state.eventPhaseDurationMs = 0;
+    state.activeQte = null;
+    state.preparedQte = null;
+    state.rhythmRound = null;
+
+    if (event && !event.upgradeRewardGranted) {
+      event.upgradeRewardGranted = true;
+      state.upgradeChoices = drawUpgradeChoices();
+      state.mode = 'UPGRADE_SELECT';
+      setFeedback('選擇一項強化', 'success');
+      return;
+    }
+
+    state.activeMonsterEvent = null;
+    state.upgradeChoices = [];
     state.mode = 'CLIMBING';
     startNextRhythmRound();
     setFeedback(UI_TEXT.combatMonsterDefeated, 'success');
+  }
+
+  function chooseUpgrade(cardId) {
+    if (state.mode !== 'UPGRADE_SELECT' || !state.upgradeChoices.includes(cardId)) return false;
+    if (cardId === 'base-attack') {
+      state.runUpgrades.baseAttackDamage += GAME_CONFIG.upgradeBaseAttackBonus;
+    } else if (cardId === 'rapid-tap-attack') {
+      state.runUpgrades.rapidTapDamage += GAME_CONFIG.upgradeRapidTapDamageBonus;
+    } else if (cardId === 'rhythm-precision') {
+      state.runUpgrades.rhythmJudgmentLevel += 1;
+    } else {
+      return false;
+    }
+
+    state.upgradeChoices = [];
+    state.activeMonsterEvent = null;
+    state.mode = 'CLIMBING';
+    startNextRhythmRound();
+    previousFrameTime = null;
+    const card = UPGRADE_CARDS.find((candidate) => candidate.id === cardId);
+    setFeedback((card?.name ?? '強化') + '已生效', 'success');
+    notify();
+    return true;
   }
 
   function advanceCombatPhase() {
@@ -873,10 +967,14 @@ export function createGame(options = {}) {
   }
 
   function beginMonsterEvent(event) {
+    clearTemporarySpeedBonus();
     event.triggered = true;
     state.activeMonsterEvent = event;
     state.activeMonster = chooseMonster(random, options.monsters);
-    state.monsterMaxHp = Math.max(1, state.activeMonster.maxHp ?? GAME_CONFIG.monsterMaxHp);
+    const monsterOrder = Math.max(1, Number.isFinite(event.id)
+      ? event.id
+      : state.monsterEvents.indexOf(event) + 1);
+    state.monsterMaxHp = GAME_CONFIG.monsterBaseHp + (monsterOrder - 1) * GAME_CONFIG.monsterHpIncrement;
     state.monsterHp = Math.min(state.monsterMaxHp, Math.max(0, state.activeMonster.initialHp ?? state.monsterMaxHp));
     state.combatDefenseRound = null;
     state.combatRapidTap = null;
@@ -1222,7 +1320,12 @@ export function createGame(options = {}) {
         debuffEndProgress
       );
       const distanceToBoundary = Math.max(0, boundary - previousProgress);
-      const boundaryTimeMs = timeToClimbDistance(distanceToBoundary, state.climbSpeed) * 1000;
+      const boundaryTimeMs = timeToClimbDistance(
+        distanceToBoundary,
+        state.climbSpeed,
+        state.temporarySpeedBonus,
+        state.temporarySpeedBonusRemainingMs / 1000
+      ) * 1000;
       const reachesBoundary = boundaryTimeMs <= remainingMs + 1e-6;
       const elapsedMs = reachesBoundary ? Math.max(0, boundaryTimeMs) : remainingMs;
       if (elapsedMs <= 1e-6) {
@@ -1278,6 +1381,7 @@ export function createGame(options = {}) {
 
   return {
     getState: () => state,
+    getEffectiveClimbSpeed: effectiveClimbSpeed,
     getBallPosition: currentBallPosition,
     getHitZoneWidth: currentHitZoneWidth,
     getRhythmHitWindows: () => rhythmHitWindows(state.rhythmRound, currentHitZoneWidth()),
@@ -1286,6 +1390,7 @@ export function createGame(options = {}) {
     pressRhythm,
     pressQteLetter,
     pressCombatShield,
+    chooseUpgrade,
     pause,
     resume,
     setAntiDizzinessMode,

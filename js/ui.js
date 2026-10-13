@@ -1,4 +1,4 @@
-import { ANTI_DIZZINESS_MODE, GAME_CONFIG, RHYTHM_TYPES, UI_TEXT } from './config.js';
+import { ANTI_DIZZINESS_MODE, GAME_CONFIG, RHYTHM_TYPES, UI_TEXT, UPGRADE_CARDS } from './config.js';
 import { formatStairProgress, stairSegmentProgress, STAIR_VIEW_MODE } from './stairs.js';
 import { RHYTHM_PHASE } from './rhythm.js';
 
@@ -1125,6 +1125,7 @@ export function createUI(onAction) {
 
   function showModal(state) {
     const mode = state.mode;
+    modalLayer.classList.toggle('is-upgrade-selection', mode === 'UPGRADE_SELECT');
     if (mode === lastMode) return;
     lastMode = mode;
     if (mode === 'CLIMBING' || mode === 'EVENT_WARNING' || mode === 'MONSTER_ENTRANCE' ||
@@ -1158,6 +1159,25 @@ export function createUI(onAction) {
           '<div class="pause-summary"><span>樓層 <b>' + Math.floor(state.progress) + 'F</b></span><span>時間 <b>' + formatTime(state.timerMs) + '</b></span></div>' +
           antiDizzinessSetting(state) +
           '<button class="primary-button" type="button" data-action="resume">' + UI_TEXT.resumeButton + '<span>↗</span></button>' +
+        '</section>';
+    } else if (mode === 'UPGRADE_SELECT') {
+      const cards = state.upgradeChoices
+        .map((cardId) => UPGRADE_CARDS.find((card) => card.id === cardId))
+        .filter(Boolean);
+      modalLayer.innerHTML =
+        '<section class="modal-card upgrade-modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">' +
+          '<div class="modal-sticker upgrade-sticker" aria-hidden="true">✦</div>' +
+          '<p class="modal-eyebrow">MONSTER DEFEATED · REWARD</p>' +
+          '<h2 id="modal-title">選擇一項強化</h2>' +
+          '<p class="modal-lead">選擇後立即生效，並持續至本局結束</p>' +
+          '<div class="upgrade-grid">' + cards.map((card) =>
+            '<button class="upgrade-card is-' + escapeHtml(card.accent) + '" type="button" data-upgrade-id="' + escapeHtml(card.id) + '">' +
+              '<span class="upgrade-card-icon" aria-hidden="true">' + escapeHtml(card.icon) + '</span>' +
+              '<strong class="upgrade-card-name">' + escapeHtml(card.name) + '</strong>' +
+              '<span class="upgrade-card-description">' + escapeHtml(card.description) + '</span>' +
+              '<span class="upgrade-card-action">選擇強化 <b aria-hidden="true">↗</b></span>' +
+            '</button>'
+          ).join('') + '</div>' +
         '</section>';
     } else if (mode === 'RESULT') {
       modalLayer.innerHTML =
@@ -1293,7 +1313,7 @@ export function createUI(onAction) {
   }
 
   function monsterVitalsMarkup(monster, hp, maxHp) {
-    const safeMaxHp = Math.max(1, Number(maxHp) || GAME_CONFIG.monsterMaxHp);
+    const safeMaxHp = Math.max(1, Number(maxHp) || GAME_CONFIG.monsterBaseHp);
     const safeHp = Math.max(0, Math.min(safeMaxHp, Number(hp) || 0));
     return '<div class="monster-vitals" aria-label="' + escapeHtml(monster.name) + ' HP ' + safeHp + ' / ' + safeMaxHp + '">' +
       '<strong class="monster-vitals-name">' + escapeHtml(monster.name) + '</strong>' +
@@ -1555,14 +1575,14 @@ export function createUI(onAction) {
     const value = qteLayer.querySelector('.monster-hp-value');
     const vitals = qteLayer.querySelector('.monster-vitals');
     if (!fill || !value || !vitals) return;
-    const maxHp = Math.max(1, state.monsterMaxHp ?? GAME_CONFIG.monsterMaxHp);
+    const maxHp = Math.max(1, state.monsterMaxHp ?? GAME_CONFIG.monsterBaseHp);
     const hp = Math.max(0, Math.min(maxHp, state.monsterHp ?? maxHp));
     fill.style.width = ((hp / maxHp) * 100) + '%';
     value.textContent = hp + '/' + maxHp;
     vitals.setAttribute('aria-label', state.activeMonster.name + ' HP ' + hp + ' / ' + maxHp);
   }
 
-  function buildMonsterEntrance(monster, elapsedMs = 0, hp = GAME_CONFIG.monsterMaxHp, maxHp = GAME_CONFIG.monsterMaxHp) {
+  function buildMonsterEntrance(monster, elapsedMs = 0, hp = GAME_CONFIG.monsterBaseHp, maxHp = GAME_CONFIG.monsterBaseHp) {
     const entranceElapsedMs = Math.min(GAME_CONFIG.monsterEntranceDurationMs, Math.max(0, elapsedMs));
     qteLayer.style.setProperty('--monster-entrance-delay', -entranceElapsedMs + 'ms');
     qteLayer.classList.remove('is-urgent');
@@ -1621,7 +1641,7 @@ export function createUI(onAction) {
           '<div class="qte-timer-track"><span id="qte-timer-bar"></span></div>' +
         '</div>' +
         monsterPresenceMarkup(monster) +
-        monsterVitalsMarkup(monster, qte.monsterHp ?? GAME_CONFIG.monsterMaxHp, qte.monsterMaxHp ?? GAME_CONFIG.monsterMaxHp) +
+        monsterVitalsMarkup(monster, qte.monsterHp ?? GAME_CONFIG.monsterBaseHp, qte.monsterMaxHp ?? GAME_CONFIG.monsterBaseHp) +
         '<p class="qte-message" id="qte-message" aria-live="polite"></p>' +
         '<div class="letter-grid" id="letter-grid"></div>' +
       '</div>';
@@ -1941,7 +1961,8 @@ export function createUI(onAction) {
     }
     const cameraBob = isAutoClimbing ? Math.sin(state.stepPhase * Math.PI * 2) * 1.2 : 0;
     arena.style.setProperty('--camera-bob', cameraBob.toFixed(2) + 'px');
-    const stepCycleDuration = Math.max(0.18, GAME_CONFIG.stepCycleDistanceFloors / (2 * Math.max(state.climbSpeed, GAME_CONFIG.minClimbSpeed)));
+    const effectiveClimbSpeed = game.getEffectiveClimbSpeed();
+    const stepCycleDuration = Math.max(0.18, GAME_CONFIG.stepCycleDistanceFloors / (2 * Math.max(effectiveClimbSpeed, GAME_CONFIG.minClimbSpeed)));
     const stepCycleDurationValue = stepCycleDuration.toFixed(2) + 's';
     if (arena.style.getPropertyValue('--step-cycle-duration') !== stepCycleDurationValue) {
       arena.style.setProperty('--step-cycle-duration', stepCycleDurationValue);
@@ -1960,7 +1981,7 @@ export function createUI(onAction) {
       ? '向上推進'
       : state.isLandingPaused ? '準備轉向下一段' : state.isTurning ? '轉向下一段樓梯' : '上行至 ' + nextNodeLabel + 'F';
     timerValue.textContent = formatTime(state.timerMs);
-    speedNumber.textContent = state.climbSpeed.toFixed(3);
+    speedNumber.textContent = effectiveClimbSpeed.toFixed(3);
 
     updateRhythmTrack(state, game);
     updateRhythmOrb(state, sceneProgress);
@@ -2081,6 +2102,11 @@ export function createUI(onAction) {
     const setting = event.target.closest('[data-setting]');
     if (setting?.dataset.setting === 'anti-dizziness') {
       onAction('set-anti-dizziness-mode', setting.getAttribute('aria-checked') !== 'true');
+      return;
+    }
+    const upgradeId = event.target.closest('[data-upgrade-id]')?.dataset.upgradeId;
+    if (upgradeId) {
+      onAction('choose-upgrade', upgradeId);
       return;
     }
     const action = event.target.closest('[data-action]')?.dataset.action;
