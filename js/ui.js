@@ -1050,6 +1050,20 @@ export function createUI(onAction) {
   const trackZones = byId('track-zones');
   const rhythmLabel = byId('rhythm-label');
   const ball = byId('rhythm-ball');
+  const ballVisual = byId('rhythm-ball-visual');
+  let rhythmTrackWidth = 0;
+  const measureRhythmTrack = () => {
+    const width = track.clientWidth;
+    if (Number.isFinite(width) && width > 0) rhythmTrackWidth = width;
+  };
+  measureRhythmTrack();
+  if (typeof ResizeObserver !== 'undefined') {
+    const rhythmTrackResizeObserver = new ResizeObserver(measureRhythmTrack);
+    rhythmTrackResizeObserver.observe(track);
+  } else {
+    window.addEventListener('resize', measureRhythmTrack, { passive: true });
+    window.addEventListener('orientationchange', measureRhythmTrack, { passive: true });
+  }
   track.style.setProperty('--rhythm-hit-flash-duration', GAME_CONFIG.rhythmHitFlashDurationMs + 'ms');
   const feedback = byId('feedback');
   const bestValue = byId('best-value');
@@ -1671,10 +1685,10 @@ export function createUI(onAction) {
       track.dataset.rhythmType = round?.typeId ?? '';
       track.setAttribute('aria-label', round ? round.label + '節奏軌道' : '節奏判定軌道');
       const ringScale = GAME_CONFIG.rhythmReadyRingStartScale;
-      ball.style.setProperty('--rhythm-ready-duration', (round?.readyDurationMs ?? GAME_CONFIG.rhythmBeatDurationMs) + 'ms');
-      ball.style.setProperty('--rhythm-ready-flash-duration', GAME_CONFIG.rhythmReadyFlashMs + 'ms');
-      ball.style.setProperty('--rhythm-ready-ring-size', (ringScale * 100) + '%');
-      ball.style.setProperty('--rhythm-ready-ring-end-scale', String(1 / ringScale));
+      ballVisual.style.setProperty('--rhythm-ready-duration', (round?.readyDurationMs ?? GAME_CONFIG.rhythmBeatDurationMs) + 'ms');
+      ballVisual.style.setProperty('--rhythm-ready-flash-duration', GAME_CONFIG.rhythmReadyFlashMs + 'ms');
+      ballVisual.style.setProperty('--rhythm-ready-ring-size', (ringScale * 100) + '%');
+      ballVisual.style.setProperty('--rhythm-ready-ring-end-scale', String(1 / ringScale));
     }
 
     if (rapidTap?.disabled) {
@@ -1719,16 +1733,18 @@ export function createUI(onAction) {
     const rapidTapActive = Boolean(rapidTap && !rapidTap.disabled);
     const ballVisible = Boolean((round && round.phase !== RHYTHM_PHASE.FINISHED) || rapidTapActive);
     ball.hidden = !ballVisible;
-    ball.style.display = ballVisible ? 'grid' : 'none';
+    ball.style.display = ballVisible ? 'block' : 'none';
     const ballProgress = rapidTapActive
       ? rapidTap.elapsedMs / Math.max(1, rapidTap.durationMs)
       : game.getBallPosition();
-    ball.style.left = trackPosition(ballProgress);
-    ball.style.setProperty('--rhythm-ball-color', rapidTapActive ? '#ffd166' : round?.color ?? '#ff8038');
-    ball.style.setProperty('--rhythm-ball-scale', String(GAME_CONFIG.combatRapidTapBallScale));
-    ball.classList.toggle('is-ready', round?.phase === RHYTHM_PHASE.SPAWN_READY);
-    ball.classList.toggle('is-paused', state.mode === 'PAUSED');
-    ball.classList.toggle('is-rapid-tap-ball', rapidTapActive);
+    const normalizedBallProgress = Math.max(0, Math.min(1, Number.isFinite(ballProgress) ? ballProgress : 0));
+    const ballX = edgeInset + normalizedBallProgress * Math.max(0, rhythmTrackWidth - edgeInset * 2);
+    ball.style.transform = 'translate3d(' + ballX.toFixed(3) + 'px, 0, 0)';
+    ballVisual.style.setProperty('--rhythm-ball-color', rapidTapActive ? '#ffd166' : round?.color ?? '#ff8038');
+    ballVisual.style.setProperty('--rhythm-ball-scale', String(GAME_CONFIG.combatRapidTapBallScale));
+    ballVisual.classList.toggle('is-ready', round?.phase === RHYTHM_PHASE.SPAWN_READY);
+    ballVisual.classList.toggle('is-paused', state.mode === 'PAUSED');
+    ballVisual.classList.toggle('is-rapid-tap-ball', rapidTapActive);
     track.classList.toggle('is-rapid-tap', rapidTapActive);
     track.classList.toggle('is-rapid-tap-disabled', Boolean(rapidTap?.disabled));
     const isRoundResolved = round?.phase === RHYTHM_PHASE.RESOLVED || round?.phase === RHYTHM_PHASE.FINISHED;
@@ -1738,16 +1754,16 @@ export function createUI(onAction) {
     if (state.rhythmLaunchSerial !== lastRhythmLaunchSerial) {
       lastRhythmLaunchSerial = state.rhythmLaunchSerial;
       if (round?.launchSerial === state.rhythmLaunchSerial) {
-        ball.classList.remove('is-launching');
-        void ball.offsetWidth;
-        ball.classList.add('is-launching');
+        ballVisual.classList.remove('is-launching');
+        void ballVisual.offsetWidth;
+        ballVisual.classList.add('is-launching');
       }
     }
     if (state.rhythmTapSerial !== lastRhythmTapSerial) {
       lastRhythmTapSerial = state.rhythmTapSerial;
-      ball.classList.remove('is-tapping');
-      void ball.offsetWidth;
-      if (round || rapidTap) ball.classList.add('is-tapping');
+      ballVisual.classList.remove('is-tapping');
+      void ballVisual.offsetWidth;
+      if (round || rapidTap) ballVisual.classList.add('is-tapping');
       if (rapidTap) {
         rhythmLabel.classList.remove('is-tap-pop');
         void rhythmLabel.offsetWidth;
