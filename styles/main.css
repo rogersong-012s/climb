@@ -42,8 +42,10 @@ button:focus-visible { outline: 3px solid #478aa0; outline-offset: 3px; }
   isolation: isolate;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
-  width: min(100vw, 680px, 60dvh);
-  height: 100dvh;
+  width: min(100vw, 680px, 60vh);
+  width: min(100vw, 680px, 60svh);
+  height: 100vh;
+  height: 100svh;
   padding-top: env(safe-area-inset-top);
   padding-bottom: env(safe-area-inset-bottom);
   overflow: hidden;
@@ -1526,4 +1528,48 @@ h1 { letter-spacing: .06em; }
 @media (max-width: 350px) {
   .speed-stat strong { font-size: 15px; }
   .speed-stat strong small { font-size: .52em; }
+}
+
+/* Keep the mobile rhythm controls in a fixed grid while only the arena absorbs viewport changes. */
+@media (max-width: 600px) {
+  .rhythm-panel {
+    display: grid;
+    grid-template-rows: 27px 50px 51px;
+    height: calc(137px + max(11px, env(safe-area-inset-bottom, 0px)));
+    min-height: 0;
+    padding: 8px 14px max(11px, env(safe-area-inset-bottom, 0px));
+  }
+  .rhythm-header {
+    height: 27px;
+    min-height: 0;
+    margin: 0;
+    line-height: 16px;
+  }
+  .operation-label {
+    min-width: 0;
+    overflow: hidden;
+    line-height: 16px;
+    text-overflow: ellipsis;
+  }
+  .feedback-pill {
+    width: 70%;
+    max-width: 70%;
+    min-width: 0;
+    height: 22px;
+    flex: 0 1 70%;
+    padding: 3px 10px;
+    line-height: 14px;
+  }
+  .rhythm-track {
+    height: 43px;
+    margin: 0 2px 7px;
+  }
+  .rhythm-footer {
+    height: 51px;
+    min-height: 0;
+  }
+}
+
+@media (max-width: 370px) {
+  .rhythm-panel { padding-right: 10px; padding-left: 10px; }
 }
