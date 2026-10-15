@@ -1,5 +1,7 @@
 import { ANTI_DIZZINESS_MODE, GAME_CONFIG, RHYTHM_TYPES, UI_TEXT, UPGRADE_CARDS } from './config.js';
 import { formatStairProgress, stairSegmentProgress, STAIR_VIEW_MODE } from './stairs.js';
+import { getActiveDebuffs } from './effects.js';
+import { QTE_CONTEXT } from './qte.js';
 import { RHYTHM_PHASE } from './rhythm.js';
 
 function formatTime(milliseconds) {
@@ -1051,6 +1053,11 @@ export function createUI(onAction) {
   const rhythmLabel = byId('rhythm-label');
   const ball = byId('rhythm-ball');
   const ballVisual = byId('rhythm-ball-visual');
+  const skipSkillButton = byId('skip-skill');
+  const skipSkillCount = byId('skip-skill-count');
+  const skipSkillStatus = byId('skip-skill-status');
+  const skipSkillEnergy = byId('skip-skill-energy');
+  const skipSkillMeter = skipSkillEnergy.closest('.skip-skill-meter');
   let rhythmTrackWidth = 0;
   const measureRhythmTrack = () => {
     const width = track.clientWidth;
@@ -1073,6 +1080,7 @@ export function createUI(onAction) {
   const modalLayer = byId('modal-layer');
   const purifyFrame = byId('purify-frame');
   const qteLayer = byId('qte-layer');
+  const qteFailureNotice = byId('qte-failure-notice');
   const gameRoot = byId('game');
   const arena = byId('arena');
   const climber = byId('climber');
@@ -1093,12 +1101,14 @@ export function createUI(onAction) {
   let lastQteMessage = '';
   let lastCombo = 0;
   let lastAnnouncement = '';
+  let lastDebuffListSignature = null;
   let lastRhythmRound = null;
   let lastRhythmTapSerial = 0;
   let lastRhythmFeedbackSerial = 0;
   let lastRhythmLaunchSerial = 0;
   let lastRhythmOrbCollectSerial = 0;
   let lastMonsterImpactSerial = 0;
+  let lastDebuffAppliedSerial = 0;
   let lastDebuffCureSerial = 0;
   let lastCombatViewMode = null;
   let lastCombatMonsterId = null;
@@ -1130,7 +1140,8 @@ export function createUI(onAction) {
     lastMode = mode;
     if (mode === 'CLIMBING' || mode === 'EVENT_WARNING' || mode === 'MONSTER_ENTRANCE' ||
         mode === 'MONSTER_CAST' || mode === 'MONSTER_IMPACT' || mode === 'ATTACK_TO_DEBUFF_DELAY' ||
-        mode === 'DEBUFF_REVEAL' || mode === 'DEBUFF_TO_ANSWER_DELAY' || mode === 'ANSWER_PREVIEW' || mode === 'MONSTER_QTE' || mode.startsWith('COMBAT_')) {
+        mode === 'DEBUFF_REVEAL' || mode === 'DEBUFF_TO_ANSWER_DELAY' || mode === 'ANSWER_PREVIEW' ||
+        mode === 'MONSTER_QTE' || mode === 'QTE_FAILURE_KNOCKBACK' || mode.startsWith('COMBAT_')) {
       modalLayer.hidden = true;
       modalLayer.innerHTML = '';
       return;
@@ -1599,24 +1610,26 @@ export function createUI(onAction) {
   function showAnswerPreview(qte, compact = false) {
     const card = qteLayer.querySelector('.qte-card');
     if (!card || !qte?.monster || card.querySelector('.answer-preview')) return;
+    const isDefenseRecovery = qte.context === QTE_CONTEXT.DEFENSE_RECOVERY;
     const preview = document.createElement('div');
-    preview.className = 'answer-preview' + (compact ? ' is-compact' : '');
+    preview.className = 'answer-preview' + (compact ? ' is-compact' : '') +
+      (isDefenseRecovery ? ' is-defense-recovery' : '');
     preview.setAttribute('role', 'status');
-    preview.setAttribute('aria-label', '本次 QTE 可選答案');
-    const [first, second] = (qte.monster.solutions ?? []).slice(0, 2);
+    preview.setAttribute('aria-label', isDefenseRecovery ? '防禦補救 QTE 正確解法' : '本次 QTE 可選答案');
+    const [first, second] = (qte.solutions ?? qte.monster.solutions ?? []).slice(0, 2);
     if (first) {
       const firstWord = document.createElement('strong');
       firstWord.className = 'answer-preview-word answer-preview-primary';
       firstWord.textContent = first.word;
       preview.append(firstWord);
     }
-    if (first && second) {
+    if (!isDefenseRecovery && first && second) {
       const separator = document.createElement('span');
       separator.className = 'answer-preview-or';
       separator.textContent = 'OR';
       preview.append(separator);
     }
-    if (second) {
+    if (!isDefenseRecovery && second) {
       const secondWord = document.createElement('strong');
       secondWord.className = 'answer-preview-word answer-preview-secondary';
       secondWord.textContent = second.word;
@@ -1624,7 +1637,7 @@ export function createUI(onAction) {
     }
     const hint = document.createElement('span');
     hint.className = 'answer-preview-hint';
-    hint.textContent = '依序輸入，解除減益';
+    hint.textContent = isDefenseRecovery ? '依序輸入，避免新增減益' : '依序輸入，解除減益';
     preview.append(hint);
     card.append(preview);
   }
@@ -1645,7 +1658,7 @@ export function createUI(onAction) {
         '<p class="qte-message" id="qte-message" aria-live="polite"></p>' +
         '<div class="letter-grid" id="letter-grid"></div>' +
       '</div>';
-    showAnswerPreview(qte, true);
+    showAnswerPreview(qte, qte.context !== QTE_CONTEXT.DEFENSE_RECOVERY);
     const qteMonster = qteLayer.querySelector('.monster-presence');
     if (settledMonster && qteMonster) {
       settledMonster.classList.remove('is-descending');
@@ -1705,10 +1718,8 @@ export function createUI(onAction) {
       track.dataset.rhythmType = round?.typeId ?? '';
       track.setAttribute('aria-label', round ? round.label + '節奏軌道' : '節奏判定軌道');
       const ringScale = GAME_CONFIG.rhythmReadyRingStartScale;
-      ballVisual.style.setProperty('--rhythm-ready-duration', (round?.readyDurationMs ?? GAME_CONFIG.rhythmBeatDurationMs) + 'ms');
       ballVisual.style.setProperty('--rhythm-ready-flash-duration', GAME_CONFIG.rhythmReadyFlashMs + 'ms');
       ballVisual.style.setProperty('--rhythm-ready-ring-size', (ringScale * 100) + '%');
-      ballVisual.style.setProperty('--rhythm-ready-ring-end-scale', String(1 / ringScale));
     }
 
     if (rapidTap?.disabled) {
@@ -1762,7 +1773,14 @@ export function createUI(onAction) {
     ball.style.transform = 'translate3d(' + ballX.toFixed(3) + 'px, 0, 0)';
     ballVisual.style.setProperty('--rhythm-ball-color', rapidTapActive ? '#ffd166' : round?.color ?? '#ff8038');
     ballVisual.style.setProperty('--rhythm-ball-scale', String(GAME_CONFIG.combatRapidTapBallScale));
-    ballVisual.classList.toggle('is-ready', round?.phase === RHYTHM_PHASE.SPAWN_READY);
+    const isReady = round?.phase === RHYTHM_PHASE.SPAWN_READY;
+    const readyProgress = isReady
+      ? Math.max(0, Math.min(1, (round.readyElapsedMs ?? 0) / Math.max(1, round.readyDurationMs ?? 1)))
+      : 1;
+    const ringEndScale = 1 / GAME_CONFIG.rhythmReadyRingStartScale;
+    ballVisual.style.setProperty('--rhythm-ready-ring-scale', String(1 - readyProgress * (1 - ringEndScale)));
+    ballVisual.style.setProperty('--rhythm-ready-ring-opacity', String(isReady ? .92 * (1 - readyProgress) : 0));
+    ballVisual.classList.toggle('is-ready', isReady);
     ballVisual.classList.toggle('is-paused', state.mode === 'PAUSED');
     ballVisual.classList.toggle('is-rapid-tap-ball', rapidTapActive);
     track.classList.toggle('is-rapid-tap', rapidTapActive);
@@ -1853,8 +1871,14 @@ export function createUI(onAction) {
     }
   }
 
+  function replayRedImpactFrame(className) {
+    gameRoot.classList.remove('is-monster-impact', 'is-debuff-applied');
+    void gameRoot.offsetWidth;
+    gameRoot.classList.add(className);
+  }
+
   function render(state, game) {
-    gameRoot.dataset.debuff = state.debuff?.type ?? 'NONE';
+    gameRoot.dataset.debuff = Object.keys(state.debuffs ?? {}).join(' ') || 'NONE';
     const activeMode = state.mode === 'PAUSED' ? state.resumeMode : state.mode;
     const isEventWarning = activeMode === 'EVENT_WARNING';
     const isMonsterEntrance = activeMode === 'MONSTER_ENTRANCE';
@@ -1865,6 +1889,7 @@ export function createUI(onAction) {
     const isDebuffToAnswerDelay = activeMode === 'DEBUFF_TO_ANSWER_DELAY';
     const isAnswerPreview = activeMode === 'ANSWER_PREVIEW';
     const isMonsterQte = activeMode === 'MONSTER_QTE' && Boolean(state.activeQte);
+    const isQteFailureNotice = activeMode === 'QTE_FAILURE_KNOCKBACK';
     const isCombat = activeMode.startsWith('COMBAT_') && Boolean(state.activeMonster);
     const isCombatDefense = activeMode === 'COMBAT_DEFENSE' && Boolean(state.combatDefenseRound);
     const isMonsterPresentation = isMonsterEntrance || isMonsterCast || isMonsterImpact || isAttackToDebuffDelay ||
@@ -1883,6 +1908,7 @@ export function createUI(onAction) {
     qteLayer.classList.toggle('is-debuff-delay', isDebuffToAnswerDelay);
     qteLayer.classList.toggle('is-answer-preview', isAnswerPreview);
     qteLayer.classList.toggle('is-active', isMonsterQte);
+    qteLayer.classList.toggle('is-defense-recovery-qte', isMonsterQte && state.activeQte?.context === QTE_CONTEXT.DEFENSE_RECOVERY);
     qteLayer.classList.toggle('is-combat', isCombat);
     qteLayer.classList.toggle('is-combat-attack-intro', activeMode === 'COMBAT_ATTACK_INTRO');
     qteLayer.classList.toggle('is-combat-attack', activeMode === 'COMBAT_ATTACK');
@@ -1983,16 +2009,49 @@ export function createUI(onAction) {
     timerValue.textContent = formatTime(state.timerMs);
     speedNumber.textContent = effectiveClimbSpeed.toFixed(3);
 
+    const skipStatus = game.getSkipSkillStatus();
+    const hasMaxSkipCharges = skipStatus.charges >= skipStatus.maxCharges;
+    const visibleEnergy = hasMaxSkipCharges ? skipStatus.energyRequired : skipStatus.energy;
+    const energyPercent = skipStatus.energyRequired > 0
+      ? Math.max(0, Math.min(100, visibleEnergy / skipStatus.energyRequired * 100))
+      : 0;
+    skipSkillCount.textContent = skipStatus.charges + '/' + skipStatus.maxCharges;
+    skipSkillStatus.textContent = state.mode === 'PAUSED'
+      ? '暫停中'
+      : skipStatus.isReady ? '可使用'
+      : skipStatus.windowOpen ? (skipStatus.charges > 0 ? '不可使用' : '未充能')
+      : skipStatus.nextMonsterFloor === null ? '無目標' : hasMaxSkipCharges ? 'MAX' : '待命';
+    skipSkillEnergy.style.width = energyPercent.toFixed(2) + '%';
+    skipSkillMeter.setAttribute('aria-valuemax', String(skipStatus.energyRequired));
+    skipSkillMeter.setAttribute('aria-valuenow', String(visibleEnergy.toFixed(2)));
+    skipSkillButton.disabled = !skipStatus.canUse;
+    skipSkillButton.classList.toggle('is-window-open', skipStatus.windowOpen);
+    skipSkillButton.classList.toggle('is-ready', skipStatus.isReady);
+    const targetDescription = skipStatus.nextMonsterFloor === null
+      ? '之後沒有怪物'
+      : '下一隻怪物在 ' + formatStairProgress(skipStatus.nextMonsterFloor) + 'F';
+    skipSkillButton.setAttribute('aria-label', '跳過怪物，' + skipStatus.charges + ' / ' + skipStatus.maxCharges + ' 次，' + targetDescription + (skipStatus.canUse ? '，可使用' : ''));
+
     updateRhythmTrack(state, game);
     updateRhythmOrb(state, sceneProgress);
-    track.classList.toggle('is-blurred', state.debuff?.type === 'BLUR');
+    track.classList.toggle('is-blurred', Boolean(state.debuffs?.BLUR));
     arena.classList.toggle('is-danger', state.feedback?.kind === 'danger');
     arena.classList.toggle('is-qte', isEventWarning || isMonsterPresentation || isMonsterQte || isCombat);
+    const shakeStartMs = Math.max(0,
+      GAME_CONFIG.monsterEntranceDurationMs - GAME_CONFIG.monsterEntranceShakeDurationMs);
+    arena.classList.toggle('is-monster-entrance-impact',
+      isMonsterEntrance && state.eventPhaseElapsedMs >= shakeStartMs &&
+      state.antiDizzinessMode !== ANTI_DIZZINESS_MODE.ON);
+    arena.style.setProperty('--monster-entrance-shake-duration', GAME_CONFIG.monsterEntranceShakeDurationMs + 'ms');
+    qteFailureNotice.hidden = !isQteFailureNotice;
+    qteFailureNotice.classList.toggle('is-paused', state.mode === 'PAUSED');
+    qteFailureNotice.style.setProperty('--qte-failure-notice-duration', GAME_CONFIG.monsterQteFailureNoticeDurationMs + 'ms');
+    byId('qte-knockback-distance').textContent = '-' + GAME_CONFIG.monsterQteFailureKnockbackFloors + 'F';
     arena.classList.toggle('is-event-paused', state.mode === 'PAUSED' && isMonsterEventSequence);
     gameRoot.classList.toggle('is-event-paused', state.mode === 'PAUSED' && isMonsterEventSequence);
-    arena.classList.toggle('debuff-sore', state.debuff?.type === 'SORE');
-    arena.classList.toggle('debuff-blur', state.debuff?.type === 'BLUR');
-    arena.classList.toggle('debuff-fatigue', state.debuff?.type === 'FATIGUE');
+    arena.classList.toggle('debuff-sore', Boolean(state.debuffs?.SORE));
+    arena.classList.toggle('debuff-blur', Boolean(state.debuffs?.BLUR));
+    arena.classList.toggle('debuff-fatigue', Boolean(state.debuffs?.FATIGUE));
     pauseButton.disabled = state.mode === 'MENU' || state.mode === 'RESULT';
     pauseButton.textContent = state.mode === 'PAUSED' ? '▶' : 'Ⅱ';
     pauseButton.setAttribute('aria-label', state.mode === 'PAUSED' ? UI_TEXT.resumeButton : UI_TEXT.pauseAria);
@@ -2021,29 +2080,75 @@ export function createUI(onAction) {
 
     const isDebuffEncounterVisible = state.monsterDebuffApplied &&
       (isDebuffReveal || isDebuffToAnswerDelay || isAnswerPreview || isMonsterQte);
-    if (state.debuff && (!state.activeMonster || isDebuffEncounterVisible)) {
-      const data = GAME_CONFIG.debuffs[state.debuff.type];
-      debuffCard.hidden = false;
-      byId('debuff-icon').textContent = data.icon;
-      byId('debuff-name').textContent = data.name;
-      byId('debuff-description').textContent = data.description;
-      byId('debuff-remaining').textContent = state.debuff.remainingFloors.toFixed(1).replace(/\.0$/, '');
-    } else {
-      debuffCard.hidden = true;
+    const debuffs = getActiveDebuffs(state)
+      .filter((debuff) => GAME_CONFIG.debuffs[debuff.type])
+      .sort((first, second) => Object.keys(GAME_CONFIG.debuffs).indexOf(first.type) - Object.keys(GAME_CONFIG.debuffs).indexOf(second.type));
+    const debuffSignature = debuffs.map((debuff) => [
+      debuff.type,
+      debuff.severity,
+      Number(debuff.remainingFloors).toFixed(1)
+    ].join(':')).join('|');
+    if (debuffSignature !== lastDebuffListSignature) {
+      lastDebuffListSignature = debuffSignature;
+      debuffCard.textContent = '';
+      debuffs.forEach((debuff) => {
+        const data = GAME_CONFIG.debuffs[debuff.type];
+        const severity = Math.max(1, Math.min(3, Number(debuff.severity) || 1));
+        const severityName = ['', '一般', '中度', '重度'][severity];
+        const remaining = Number(debuff.remainingFloors).toFixed(1);
+        const entry = document.createElement('div');
+        entry.className = 'debuff-card-item';
+        entry.dataset.severity = String(severity);
+        entry.setAttribute('role', 'status');
+        entry.setAttribute('aria-label', data.name + '，' + severityName + '，剩餘 ' + remaining + ' 層');
+
+        const icon = document.createElement('span');
+        icon.className = 'debuff-icon';
+        icon.setAttribute('aria-hidden', 'true');
+        icon.textContent = data.icon;
+
+        const info = document.createElement('span');
+        info.className = 'debuff-info';
+        const name = document.createElement('strong');
+        name.textContent = data.name;
+        info.appendChild(name);
+
+        const level = document.createElement('span');
+        level.className = 'debuff-severity';
+        level.textContent = severityName;
+
+        const count = document.createElement('b');
+        count.className = 'debuff-count';
+        const floors = document.createElement('i');
+        floors.textContent = remaining;
+        count.appendChild(floors);
+        count.appendChild(document.createTextNode('F'));
+        entry.appendChild(icon);
+        entry.appendChild(info);
+        entry.appendChild(level);
+        entry.appendChild(count);
+        debuffCard.appendChild(entry);
+      });
     }
+    debuffCard.hidden = debuffs.length === 0;
     debuffCard.classList.toggle('is-event-reveal', isDebuffReveal);
-    debuffCard.classList.toggle('is-qte-overlay', isDebuffEncounterVisible);
+    debuffCard.classList.toggle('is-qte-overlay', isDebuffEncounterVisible || Boolean(state.activeMonster));
 
     if (state.monsterImpactSerial > lastMonsterImpactSerial) {
       lastMonsterImpactSerial = state.monsterImpactSerial;
-      gameRoot.classList.remove('is-monster-impact');
-      void gameRoot.offsetWidth;
-      gameRoot.classList.add('is-monster-impact');
+      replayRedImpactFrame('is-monster-impact');
       climber.classList.remove('is-monster-hit');
       void climber.offsetWidth;
       climber.classList.add('is-monster-hit');
     } else if (state.monsterImpactSerial < lastMonsterImpactSerial) {
       lastMonsterImpactSerial = state.monsterImpactSerial;
+    }
+
+    if (state.debuffAppliedSerial > lastDebuffAppliedSerial) {
+      lastDebuffAppliedSerial = state.debuffAppliedSerial;
+      replayRedImpactFrame('is-debuff-applied');
+    } else if (state.debuffAppliedSerial < lastDebuffAppliedSerial) {
+      lastDebuffAppliedSerial = state.debuffAppliedSerial;
     }
 
     purifyFrame.style.setProperty('--debuff-cure-flash-duration', GAME_CONFIG.debuffCureFlashDurationMs + 'ms');
@@ -2117,6 +2222,11 @@ export function createUI(onAction) {
     if (pauseButton.disabled) return;
     onAction(pauseButton.textContent === '▶' ? 'resume' : 'pause');
   });
+  skipSkillButton.addEventListener('click', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!skipSkillButton.disabled) onAction('use-skip-skill');
+  });
   gameRoot.addEventListener('pointerdown', (event) => {
     if (event.pointerType === 'mouse' || event.button !== 0) return;
     if (event.target.closest('button, a, input, select, textarea, [data-action], [data-setting], [data-tile-id], .modal-layer')) return;
@@ -2135,7 +2245,7 @@ export function createUI(onAction) {
   });
   gameRoot.addEventListener('animationend', (event) => {
     if (event.target === gameRoot && event.animationName === 'monster-impact-vignette') {
-      gameRoot.classList.remove('is-monster-impact');
+      gameRoot.classList.remove('is-monster-impact', 'is-debuff-applied');
     }
   });
   qteLayer.addEventListener('click', (event) => {

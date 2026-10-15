@@ -12,6 +12,55 @@ const monsterEventFloors = Object.freeze(Array.from(
 ));
 const rhythmOrbPlatformAnchor = Object.freeze({ x: 350, y: 256 });
 
+export const RHYTHM_AUDIO_CONFIG = Object.freeze({
+  enabled: true,
+  // Keep the shared output path at its current setting for SFX. The BGM path
+  // removes a duplicated per-note attenuation and adds this separate lift.
+  masterVolume: 0.26,
+  masterGainBoostDb: 18,
+  // Combined with removal of the extra 0.26 per-note BGM factor and track trims,
+  // this targets about +18 dB on the un-limited music path vs. the prior mix.
+  bgmMasterBoostDb: 7.8,
+  rhythmAudioOffsetMs: 0,
+  bgmBars: 16,
+  bgmBeatsPerBar: 4,
+  bgmVolume: 0.42,
+  bgmBusVolume: 0.78,
+  bgmEncounterBusVolume: 0.78,
+  bgmInstrumentBusLevels: Object.freeze({
+    drums: 0.9,
+    rhythmGuitar: 0.88,
+    leadGuitar: 0.92,
+    bass: 0.96,
+    piano: 0.72,
+    strings: 0.74,
+    brass: 0.7
+  }),
+  bgmLookAheadSeconds: 0.12,
+  bgmLateToleranceMs: 35,
+  rhythmCueBusVolume: 1,
+  feedbackBusVolume: 0.45,
+  hitFeedbackVolume: 0.32,
+  missFeedbackVolume: 0.22,
+  hitFeedbackDurationSeconds: 0.14,
+  missFeedbackDurationSeconds: 0.2,
+  feedbackDuplicateGuardMs: 45,
+  feedbackDuckDurationSeconds: 0.11,
+  feedbackRhythmDuckGain: 1,
+  feedbackBgmDuckGain: 1,
+  prepCueVolume: 0.4,
+  prepCueDurationSeconds: 0.14,
+  prepCueNotesByType: Object.freeze({
+    RED: Object.freeze([72, 74]),
+    BLUE: Object.freeze([74, 77]),
+    YELLOW: Object.freeze([76, 79]),
+    GREEN: Object.freeze([79, 83]),
+    PURPLE: Object.freeze([81, 84])
+  }),
+  lookAheadSeconds: 0.09,
+  lateToleranceMs: 20,
+});
+
 export const GAME_CONFIG = Object.freeze({
   startFloor,
   maxFloor,
@@ -21,6 +70,18 @@ export const GAME_CONFIG = Object.freeze({
   hitSpeedBonus: 0.02,
   monsterDefeatSpeedBonus: 0.01,
   monsterDefeatMaxSpeedBonus: 0.015,
+  skipSkillMaxCharges: 3,
+  skipSkillEnergyRequired: 48,
+  skipSkillActivationSeconds: 2,
+  skipSkillRhythmEnergy: Object.freeze({
+    RED: 1.0,
+    BLUE: 1.0,
+    YELLOW: 3.0,
+    GREEN: 6.0,
+    PURPLE: 10.0
+  }),
+  skipSkillComboEnergyBonusPerCombo: 0.01,
+  skipSkillComboEnergyBonusMaxCombo: 12,
   speedDecay: 0.005,
   stepCycleDistanceFloors: 0.1,
   basePlatformPauseDurationMs: 100,
@@ -35,13 +96,13 @@ export const GAME_CONFIG = Object.freeze({
   rhythmBeatDurationMs: 500,
   rhythmMoveSpeedMultiplier: 1.3,
   perfectRhythmSpeedBurstBonus: 0.1,
-  perfectRhythmSpeedBurstDurationMs: 200,
+  perfectRhythmSpeedBurstDurationMs: 400,
   rhythmInputDebounceMs: 70,
   rhythmHitFlashDurationMs: 150,
   rhythmPrepareBeats: 2,
   rhythmReadyRingStartScale: 1.9,
   rhythmReadyFlashMs: 100,
-  rhythmRespawnDelayMs: 100,
+  rhythmRespawnDelayBeats: 1,
   purpleRhythmStartOffsetBeats: 1,
   rhythmBallEdgeGapPx: 12,
   rhythmOrbApproachRangeFloors: 0.5,
@@ -56,6 +117,11 @@ export const GAME_CONFIG = Object.freeze({
   // Keep weights centralized so future rhythm types can be tuned without changing selection logic.
   rhythmTypeWeights: Object.freeze({ RED: 1, BLUE: 1, YELLOW: 1, GREEN: 1, PURPLE: 1 }),
   monsterQteDurationMs: 6000,
+  monsterQteDurationMultiplier: 2 / 3,
+  monsterQteFailureKnockbackFloors: 3,
+  monsterQteFailureNoticeDurationMs: 1000,
+  combatDefenseRecoveryQteDurationMs: 4000, // Current encounter QTE duration after the 2/3 multiplier.
+  monsterEntranceShakeDurationMs: 300,
   monsterBaseHp: 100,
   monsterHpIncrement: 5,
   combatRoundIntroDurationMs: 800,

@@ -255,15 +255,22 @@
           <div class="floor-marker"><span id="scene-view-label">1.0F 視角</span><strong id="scene-floor">1.0F</strong><small id="scene-target">上行至 1.5F</small></div>
           <div class="combo-stamp" id="combo-stamp" aria-hidden="true"><span>連段</span><strong id="combo-stamp-value">0</strong></div>
         </div>
-        <div class="debuff-card" id="debuff-card" hidden>
-          <span class="debuff-icon" id="debuff-icon">〰</span>
-          <span><strong id="debuff-name"></strong><small id="debuff-description"></small></span>
-          <b class="debuff-count"><i id="debuff-remaining"></i>F</b>
-        </div>
+        <div class="debuff-card debuff-list" id="debuff-card" aria-label="目前負面狀態" aria-live="polite" hidden></div>
         <div class="climber" id="climber" aria-hidden="true"><span class="shoe shoe-left"></span><span class="shoe shoe-right"></span></div>
         <div class="rhythm-orb-toast" id="rhythm-orb-toast" aria-live="polite" hidden></div>
 
+        <button class="skip-skill" id="skip-skill" type="button" disabled aria-label="跳過怪物技能，0/3 次">
+          <span class="skip-skill-heading"><span class="skip-skill-icon" aria-hidden="true">↯</span><strong>跳過</strong></span>
+          <span class="skip-skill-count" id="skip-skill-count">0/3</span>
+          <span class="skip-skill-status" id="skip-skill-status">蓄能中</span>
+          <span class="skip-skill-meter" role="progressbar" aria-label="跳過技能充能" aria-valuemin="0" aria-valuemax="48" aria-valuenow="0"><i id="skip-skill-energy"></i></span>
+        </button>
+
         <section class="qte-layer" id="qte-layer" aria-live="polite" aria-label="樓梯間中的怪物快速反應事件" hidden></section>
+        <div class="qte-failure-notice" id="qte-failure-notice" aria-live="assertive" hidden>
+          <strong>被踢下樓！</strong>
+          <span id="qte-knockback-distance">-3F</span>
+        </div>
       </section>
 
       <section class="rhythm-panel" aria-label="節奏操作區">

@@ -38,13 +38,15 @@ export function scheduleMonsterEvents(random = Math.random, ranges = GAME_CONFIG
     return {
       id: index + 1,
       floor: positions[Math.max(0, randomIndex)],
-      triggered: false
+      triggered: false,
+      skipped: false,
+      skipWindowUnlocked: false
     };
   }).filter((event) => Number.isFinite(event.floor));
 }
 
 export function firstCrossedMonsterEvent(previousProgress, nextProgress, events) {
   return events
-    .filter((event) => !event.triggered && previousProgress < event.floor && nextProgress >= event.floor)
+    .filter((event) => !event.triggered && !event.skipped && previousProgress < event.floor && nextProgress >= event.floor)
     .sort((a, b) => a.floor - b.floor)[0] ?? null;
 }

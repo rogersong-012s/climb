@@ -1,6 +1,10 @@
 import { GAME_CONFIG } from './config.js';
 
 const ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+export const QTE_CONTEXT = Object.freeze({
+  ENCOUNTER: 'encounter',
+  DEFENSE_RECOVERY: 'defense-recovery'
+});
 
 function shuffle(items, random = Math.random) {
   const result = items.slice();
@@ -11,8 +15,14 @@ function shuffle(items, random = Math.random) {
   return result;
 }
 
-export function createQte(monster, random = Math.random, durationMs = monster.qteDurationMs ?? GAME_CONFIG.monsterQteDurationMs) {
-  const requiredLetters = monster.solutions.flatMap((solution) => [...solution.word]);
+export function createQte(
+  monster,
+  random = Math.random,
+  durationMs = monster.qteDurationMs ?? GAME_CONFIG.monsterQteDurationMs,
+  { context = QTE_CONTEXT.ENCOUNTER, solutions = monster.solutions } = {}
+) {
+  const qteSolutions = Array.isArray(solutions) ? solutions : monster.solutions;
+  const requiredLetters = qteSolutions.flatMap((solution) => [...solution.word]);
   const targetSize = Math.max(
     GAME_CONFIG.qteLetterMin,
     Math.min(GAME_CONFIG.qteLetterMax, requiredLetters.length + 2)
@@ -28,6 +38,8 @@ export function createQte(monster, random = Math.random, durationMs = monster.qt
   return {
     id: 'qte-' + Math.floor(random() * 1_000_000_000),
     monster,
+    context,
+    solutions: qteSolutions,
     durationMs,
     remainingMs: durationMs,
     input: '',
