@@ -22,8 +22,8 @@ export const RHYTHM_AUDIO_CONFIG = Object.freeze({
   // The existing compressor and soft ceiling remain downstream for peak control.
   sfxMasterBoostDb: 18,
   audioSettingsStorageKey: 'dengfeng-zaoji-audio-settings-v1',
-  defaultBgmVolumePercent: 40,
-  defaultSfxVolumePercent: 100,
+  defaultBgmVolumePercent: 45,
+  defaultSfxVolumePercent: 90,
   // Combined with removal of the extra 0.26 per-note BGM factor and track trims,
   // this targets about +18 dB on the un-limited music path vs. the prior mix.
   bgmMasterBoostDb: 7.8,

@@ -8,6 +8,9 @@ const debug = createDebugController();
 const game = createGame({ debugHooks: debug.enabled ? debug.hooks : null });
 const rhythmAudio = createRhythmAudio();
 let lastRhythmFeedbackSerial = null;
+let lastRapidTapRound = null;
+let lastRapidTapCount = 0;
+let rapidTapAudioRoundSerial = 0;
 if (debug.enabled && typeof window !== 'undefined') {
   window.__rhythmAudioDebug = () => rhythmAudio.getDiagnostics();
   console.info('[RHYTHM AUDIO DEBUG] Use __rhythmAudioDebug() to inspect the current ball timeline.');
@@ -30,6 +33,9 @@ const ui = createUI((action, payload) => {
 function startGame() {
   if (debug.enabled) debug.reset();
   lastRhythmFeedbackSerial = null;
+  lastRapidTapRound = null;
+  lastRapidTapCount = 0;
+  rapidTapAudioRoundSerial = 0;
   rhythmAudio.reset();
   void rhythmAudio.unlock();
   game.start(globalThis.performance?.now?.());
@@ -54,6 +60,23 @@ game.subscribe((state) => {
       rhythmAudio.playInputFeedback(state.rhythmFeedbackKind, eventSerial);
     }
     lastRhythmFeedbackSerial = feedbackSerial;
+  }
+
+  const rapidTap = state.mode === 'COMBAT_RAPID_TAP' ? state.combatRapidTap : null;
+  if (!rapidTap) {
+    lastRapidTapRound = null;
+    lastRapidTapCount = 0;
+  } else if (rapidTap !== lastRapidTapRound) {
+    lastRapidTapRound = rapidTap;
+    lastRapidTapCount = 0;
+    rapidTapAudioRoundSerial += 1;
+  }
+  if (rapidTap && !rapidTap.disabled) {
+    const tapCount = Math.max(0, Math.floor(Number(rapidTap.tapCount) || 0));
+    for (let tap = lastRapidTapCount + 1; tap <= tapCount; tap += 1) {
+      rhythmAudio.playInputFeedback('hit', `rapid-tap-${rapidTapAudioRoundSerial}-${tap}`);
+    }
+    lastRapidTapCount = tapCount;
   }
   ui.render(state, game);
 });
