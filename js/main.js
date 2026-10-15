@@ -24,6 +24,7 @@ const ui = createUI((action, payload) => {
   else if (action === 'pause') game.pause();
   else if (action === 'resume') resumeGame();
   else if (action === 'set-anti-dizziness-mode') game.setAntiDizzinessMode(payload ? ANTI_DIZZINESS_MODE.ON : ANTI_DIZZINESS_MODE.OFF);
+  else if (action === 'set-audio-volume') rhythmAudio.setVolumeSettings(payload);
 });
 
 function startGame() {
@@ -115,6 +116,10 @@ document.addEventListener('visibilitychange', () => {
 function frame(timestamp) {
   game.update(timestamp);
   if (debug.enabled) debug.update(timestamp, game);
+  const state = game.getState();
+  // UPGRADE_SELECT freezes gameplay and game.timerMs, so keep the BGM's own
+  // AudioContext-based transport/scheduler advancing for this modal only.
+  if (state.mode === 'UPGRADE_SELECT') rhythmAudio.sync(state);
   requestAnimationFrame(frame);
 }
 

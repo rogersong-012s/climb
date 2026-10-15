@@ -1,6 +1,7 @@
 import { GAME_CONFIG, RHYTHM_AUDIO_CONFIG } from './config.js';
 import { RHYTHM_PHASE } from './rhythm.js';
 import { createInstrumentSampleBank } from './audio-voices.js';
+import { audioPercentToGain, loadAudioSettings, saveAudioSettings } from './audio-settings.js';
 
 const RHYTHM_MODES = new Set(['CLIMBING', 'COMBAT_ATTACK']);
 const BGM_ACTIVE_MODES = new Set([
@@ -8,7 +9,7 @@ const BGM_ACTIVE_MODES = new Set([
   'ATTACK_TO_DEBUFF_DELAY', 'DEBUFF_REVEAL', 'DEBUFF_TO_ANSWER_DELAY', 'ANSWER_PREVIEW',
   'MONSTER_QTE', 'QTE_FAILURE_KNOCKBACK', 'COMBAT_ATTACK_INTRO', 'COMBAT_ATTACK',
   'COMBAT_RAPID_TAP', 'COMBAT_ATTACK_SETTLE', 'COMBAT_DEFENSE_INTRO', 'COMBAT_DEFENSE',
-  'COMBAT_DEFENSE_SUCCESS', 'COMBAT_DEFENSE_FAILED', 'COMBAT_VICTORY'
+  'COMBAT_DEFENSE_SUCCESS', 'COMBAT_DEFENSE_FAILED', 'COMBAT_VICTORY', 'UPGRADE_SELECT'
 ]);
 const TONE_PRIORITY = Object.freeze({ spawn: 0, tick: 1 });
 const ROCK_CHORDS = Object.freeze({
@@ -241,6 +242,8 @@ export function createRhythmAudio({ config = RHYTHM_AUDIO_CONFIG, audioContextFa
   let context = null;
   let masterGain = null;
   let bgmBoostGain = null;
+  let bgmUserGain = null;
+  let sfxMasterGain = null;
   let outputLimiter = null;
   let bgmBus = null;
   const bgmInstrumentBuses = new Map();
@@ -264,6 +267,8 @@ export function createRhythmAudio({ config = RHYTHM_AUDIO_CONFIG, audioContextFa
   let bgmEvents = buildBgmArrangement(config);
   let bgmBeatPosition = 0;
   let lastBgmTimerMs = null;
+  let lastBgmAudioTime = null;
+  let lastBgmMode = null;
   let transportBeatDurationMs = GAME_CONFIG.rhythmBeatDurationMs / GAME_CONFIG.rhythmMoveSpeedMultiplier;
   let bgmCycle = 0;
   let bgmEventIndex = 0;
@@ -274,8 +279,29 @@ export function createRhythmAudio({ config = RHYTHM_AUDIO_CONFIG, audioContextFa
   let lastInputFeedbackId = null;
   let lastInputFeedbackKind = null;
   let lastInputFeedbackAt = -Infinity;
+  let volumeSettings = loadAudioSettings();
   const activeNotes = new Set();
   const loopBeats = Math.max(1, Number(config.bgmBars) || 16) * Math.max(1, Number(config.bgmBeatsPerBar) || 4);
+
+  function setGainSmoothly(parameter, value) {
+    if (!context || !parameter) return;
+    const now = context.currentTime;
+    const target = Math.max(0, Number(value) || 0);
+    try {
+      parameter.cancelScheduledValues(now);
+      parameter.setValueAtTime(Math.max(0, parameter.value), now);
+      parameter.linearRampToValueAtTime(target, now + 0.035);
+    } catch { /* A browser may reject a late automation update during teardown. */ }
+  }
+
+  function applyVolumeSettings(settings) {
+    volumeSettings = saveAudioSettings(settings);
+    if (!context) return { ...volumeSettings };
+    setGainSmoothly(bgmUserGain?.gain, audioPercentToGain(volumeSettings.bgmPercent));
+    const sfxBoost = Math.pow(10, (Number(config.sfxMasterBoostDb) || 0) / 20);
+    setGainSmoothly(sfxMasterGain?.gain, sfxBoost * audioPercentToGain(volumeSettings.sfxPercent));
+    return { ...volumeSettings };
+  }
 
   function effectiveBeatDurationMs(state) {
     const roundBeat = Number(state?.rhythmRound?.beatDurationMs);
@@ -304,6 +330,8 @@ export function createRhythmAudio({ config = RHYTHM_AUDIO_CONFIG, audioContextFa
 
       masterGain = context.createGain();
       bgmBoostGain = context.createGain();
+      bgmUserGain = context.createGain();
+      sfxMasterGain = context.createGain();
       bgmBus = context.createGain();
       rhythmBus = context.createGain();
       feedbackBus = context.createGain();
@@ -320,6 +348,12 @@ export function createRhythmAudio({ config = RHYTHM_AUDIO_CONFIG, audioContextFa
         Math.pow(10, (Number(config.bgmMasterBoostDb) || 0) / 20),
         context.currentTime
       );
+      bgmUserGain.gain.setValueAtTime(audioPercentToGain(volumeSettings.bgmPercent), context.currentTime);
+      const sfxBoost = Math.pow(10, (Number(config.sfxMasterBoostDb) || 0) / 20);
+      sfxMasterGain.gain.setValueAtTime(
+        sfxBoost * audioPercentToGain(volumeSettings.sfxPercent),
+        context.currentTime
+      );
       bgmBus.gain.setValueAtTime(Math.max(0, Number(config.bgmBusVolume) || 0.78), context.currentTime);
       rhythmBus.gain.setValueAtTime(Math.max(0, Number(config.rhythmCueBusVolume) || 1), context.currentTime);
       rhythmBusLevel = Math.max(0, Number(config.rhythmCueBusVolume) || 1);
@@ -331,9 +365,11 @@ export function createRhythmAudio({ config = RHYTHM_AUDIO_CONFIG, audioContextFa
         bgmInstrumentBuses.set(track, bus);
       }
       bgmBus.connect(bgmBoostGain);
-      bgmBoostGain.connect(masterGain);
-      rhythmBus.connect(masterGain);
-      feedbackBus.connect(masterGain);
+      bgmBoostGain.connect(bgmUserGain);
+      bgmUserGain.connect(masterGain);
+      rhythmBus.connect(sfxMasterGain);
+      feedbackBus.connect(sfxMasterGain);
+      sfxMasterGain.connect(masterGain);
 
       if (outputLimiter) {
         outputLimiter.threshold.setValueAtTime(-1.5, context.currentTime);
@@ -378,6 +414,8 @@ export function createRhythmAudio({ config = RHYTHM_AUDIO_CONFIG, audioContextFa
       context = null;
       masterGain = null;
       bgmBoostGain = null;
+      bgmUserGain = null;
+      sfxMasterGain = null;
       bgmBus = null;
       rhythmBus = null;
       feedbackBus = null;
@@ -577,8 +615,8 @@ export function createRhythmAudio({ config = RHYTHM_AUDIO_CONFIG, audioContextFa
       ? Number(config.hitFeedbackDurationSeconds) || 0.14
       : Number(config.missFeedbackDurationSeconds) || 0.2;
     const volume = isHit
-      ? Number(config.hitFeedbackVolume) || 0.55
-      : Number(config.missFeedbackVolume) || 0.4;
+      ? Number(config.hitFeedbackVolume) || 0.8
+      : Number(config.missFeedbackVolume) || 0.55;
     const when = context.currentTime + 0.002;
     const duckDuration = Math.max(0.04, Number(config.feedbackDuckDurationSeconds) || 0.11);
     const duckBus = (bus, baseLevel, duckGain) => {
@@ -600,9 +638,12 @@ export function createRhythmAudio({ config = RHYTHM_AUDIO_CONFIG, audioContextFa
       createOscillator(note, 988 * 2.76, 'sine', 0.16, 988 * 2.76, duration * 0.34);
       createOscillator(note, 988 * 5.4, 'sine', 0.055, 988 * 5.4, duration * 0.2);
     } else {
-      // A compact falling sine thump reads as a low electronic drum without a sharp alert tail.
-      createOscillator(note, 142, 'sine', 0.58, 48, duration * 0.48);
-      createOscillator(note, 68, 'triangle', 0.2, 52, duration * 0.65, 0.008);
+      // Keep the low thump, but move some energy out of sub-bass so small phone
+      // speakers can reproduce the impact. The short 260 Hz triangle adds body
+      // without extending the established MISS duration.
+      createOscillator(note, 142, 'sine', 0.42, 58, duration * 0.48);
+      createOscillator(note, 68, 'triangle', 0.08, 52, duration * 0.52, 0.008);
+      createOscillator(note, 260, 'triangle', 0.29, 175, duration * 0.3, 0.003);
     }
     return true;
   }
@@ -645,18 +686,32 @@ export function createRhythmAudio({ config = RHYTHM_AUDIO_CONFIG, audioContextFa
     const timerMs = Number(state?.timerMs);
     if (!Number.isFinite(timerMs)) return;
     const currentBeatMs = effectiveBeatDurationMs(state);
+    const nowAudioTime = Number.isFinite(context?.currentTime) ? context.currentTime : null;
+    const wasUpgradeSelection = lastBgmMode === 'UPGRADE_SELECT';
     if (lastBgmTimerMs === null || timerMs < lastBgmTimerMs - 1e-6) {
       bgmBeatPosition = 0;
       lastBgmTimerMs = timerMs;
       transportBeatDurationMs = currentBeatMs;
       bgmStarted = false;
       resetBgmCursor(0, true);
+      lastBgmAudioTime = nowAudioTime;
+      lastBgmMode = state.mode;
       return;
     }
 
-    const deltaMs = Math.max(0, timerMs - lastBgmTimerMs);
+    // Gameplay time is frozen while a reward card is open, but the music clock
+    // must keep moving. Use the running AudioContext clock for the selection
+    // interval and bridge its final partial frame when leaving that mode.
+    const useAudioClock = wasUpgradeSelection;
+    const deltaMs = useAudioClock
+      ? context?.state === 'running' && nowAudioTime !== null && lastBgmAudioTime !== null
+        ? Math.max(0, (nowAudioTime - lastBgmAudioTime) * 1000)
+        : 0
+      : Math.max(0, timerMs - lastBgmTimerMs);
     if (deltaMs > 0) bgmBeatPosition += deltaMs / Math.max(1, transportBeatDurationMs);
     lastBgmTimerMs = timerMs;
+    lastBgmAudioTime = nowAudioTime;
+    lastBgmMode = state.mode;
 
     if (deltaMs > 900) {
       // Do not replay a backlog of notes after a background-tab/frame stall.
@@ -795,11 +850,8 @@ export function createRhythmAudio({ config = RHYTHM_AUDIO_CONFIG, audioContextFa
     if (interrupted) return;
 
     if (state.mode === 'UPGRADE_SELECT') {
-      if (!bgmHeld) {
-        stopQueuedNotes({ track: 'bgm', includeStarted: true, fadeSeconds: 0.09 });
-        clearRhythmTimeline();
-        bgmHeld = true;
-      }
+      if (activeFingerprint !== null || timeline.length > 0) clearRhythmTimeline();
+      if (context?.state === 'running') scheduleBgm(state);
       return;
     }
     if (state.mode === 'RESULT' || state.mode === 'GAME_OVER') {
@@ -887,6 +939,8 @@ export function createRhythmAudio({ config = RHYTHM_AUDIO_CONFIG, audioContextFa
     latestElapsedMs = 0;
     bgmBeatPosition = 0;
     lastBgmTimerMs = null;
+    lastBgmAudioTime = null;
+    lastBgmMode = null;
     transportBeatDurationMs = GAME_CONFIG.rhythmBeatDurationMs / GAME_CONFIG.rhythmMoveSpeedMultiplier;
     bgmCycle = 0;
     bgmEventIndex = 0;
@@ -986,5 +1040,16 @@ export function createRhythmAudio({ config = RHYTHM_AUDIO_CONFIG, audioContextFa
     };
   }
 
-  return Object.freeze({ sync, unlock, interrupt, recover, reset, getDiagnostics, playInputFeedback });
+  function setVolumeSettings(settings) {
+    return applyVolumeSettings(settings);
+  }
+
+  function getVolumeSettings() {
+    return { ...volumeSettings };
+  }
+
+  return Object.freeze({
+    sync, unlock, interrupt, recover, reset, getDiagnostics, playInputFeedback,
+    setVolumeSettings, getVolumeSettings
+  });
 }

@@ -18,6 +18,12 @@ export const RHYTHM_AUDIO_CONFIG = Object.freeze({
   // removes a duplicated per-note attenuation and adds this separate lift.
   masterVolume: 0.26,
   masterGainBoostDb: 18,
+  // Raise the shared non-BGM bus by +12 dB over its previous +6 dB setting.
+  // The existing compressor and soft ceiling remain downstream for peak control.
+  sfxMasterBoostDb: 18,
+  audioSettingsStorageKey: 'dengfeng-zaoji-audio-settings-v1',
+  defaultBgmVolumePercent: 40,
+  defaultSfxVolumePercent: 100,
   // Combined with removal of the extra 0.26 per-note BGM factor and track trims,
   // this targets about +18 dB on the un-limited music path vs. the prior mix.
   bgmMasterBoostDb: 7.8,
@@ -40,8 +46,10 @@ export const RHYTHM_AUDIO_CONFIG = Object.freeze({
   bgmLateToleranceMs: 35,
   rhythmCueBusVolume: 1,
   feedbackBusVolume: 0.45,
-  hitFeedbackVolume: 0.32,
-  missFeedbackVolume: 0.22,
+  // Per-note trim: compensate for feedbackBusVolume without raising the shared SFX bus.
+  // Both feedback sounds receive about +8 dB; prep cues and other SFX are unchanged.
+  hitFeedbackVolume: 0.8,
+  missFeedbackVolume: 0.55,
   hitFeedbackDurationSeconds: 0.14,
   missFeedbackDurationSeconds: 0.2,
   feedbackDuplicateGuardMs: 45,

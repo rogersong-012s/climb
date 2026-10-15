@@ -3,6 +3,7 @@ import { formatStairProgress, stairSegmentProgress, STAIR_VIEW_MODE } from './st
 import { getActiveDebuffs } from './effects.js';
 import { QTE_CONTEXT } from './qte.js';
 import { RHYTHM_PHASE } from './rhythm.js';
+import { loadAudioSettings } from './audio-settings.js';
 
 function formatTime(milliseconds) {
   const totalCs = Math.floor(Math.max(0, milliseconds) / 10);
@@ -1133,6 +1134,21 @@ export function createUI(onAction) {
     if (value) value.textContent = enabled ? 'ON' : 'OFF';
   }
 
+  function audioVolumeSettings() {
+    const settings = loadAudioSettings();
+    const slider = (key, label, value) =>
+      '<label class="audio-volume-row" for="pause-' + key + '-volume">' +
+        '<span class="audio-volume-label">' + label + '</span>' +
+        '<span class="audio-volume-value" data-volume-value="' + key + '">' + value + '%</span>' +
+        '<input class="audio-volume-slider" id="pause-' + key + '-volume" type="range" min="0" max="100" step="1" value="' + value + '" data-audio-volume="' + key + 'Percent" aria-label="' + label + '" />' +
+      '</label>';
+    return '<section class="pause-audio-settings" aria-label="音量設定">' +
+      '<h3>音量設定</h3>' +
+      slider('bgm', 'BGM 音量', settings.bgmPercent) +
+      slider('sfx', '其他音效', settings.sfxPercent) +
+    '</section>';
+  }
+
   function showModal(state) {
     const mode = state.mode;
     modalLayer.classList.toggle('is-upgrade-selection', mode === 'UPGRADE_SELECT');
@@ -1168,6 +1184,7 @@ export function createUI(onAction) {
           '<p class="modal-eyebrow">PAUSE · 深呼吸一下</p><h2 id="modal-title">' + UI_TEXT.pauseTitle + '</h2>' +
           '<p class="modal-lead">' + UI_TEXT.pauseBody + '</p>' +
           '<div class="pause-summary"><span>樓層 <b>' + Math.floor(state.progress) + 'F</b></span><span>時間 <b>' + formatTime(state.timerMs) + '</b></span></div>' +
+          audioVolumeSettings() +
           antiDizzinessSetting(state) +
           '<button class="primary-button" type="button" data-action="resume">' + UI_TEXT.resumeButton + '<span>↗</span></button>' +
         '</section>';
@@ -2217,6 +2234,18 @@ export function createUI(onAction) {
     const action = event.target.closest('[data-action]')?.dataset.action;
     if (action === 'start') onAction('start');
     if (action === 'resume') onAction('resume');
+  });
+  modalLayer.addEventListener('input', (event) => {
+    const slider = event.target.closest('[data-audio-volume]');
+    if (!slider) return;
+    const settingKey = slider.dataset.audioVolume;
+    const value = Math.max(0, Math.min(100, Math.round(Number(slider.value) || 0)));
+    slider.value = String(value);
+    const label = modalLayer.querySelector('[data-volume-value="' + settingKey.replace('Percent', '') + '"]');
+    if (label) label.textContent = value + '%';
+    const settings = loadAudioSettings();
+    settings[settingKey] = value;
+    onAction('set-audio-volume', settings);
   });
   pauseButton.addEventListener('click', () => {
     if (pauseButton.disabled) return;
