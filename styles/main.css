@@ -1777,7 +1777,7 @@ h1 { letter-spacing: .06em; }
   padding: 6px 7px 5px;
   border: 1px solid rgba(57,86,112,.2);
   border-left: 2px solid rgba(56,139,214,.52);
-  border-radius: 4px 2px 4px 2px;
+  border-radius: 10px 8px 10px 8px;
   background: rgba(248,250,252,.88);
   box-shadow: 0 2px 7px rgba(11,28,44,.12), inset 0 1px rgba(255,255,255,.78);
   color: #30465c;
@@ -1796,26 +1796,35 @@ h1 { letter-spacing: .06em; }
 .skip-skill-meter i { display: block; width: 0; height: 100%; border-radius: inherit; background: linear-gradient(90deg, rgba(98,170,255,.8), rgba(255,150,63,.82)); box-shadow: 0 0 4px rgba(67,139,255,.35); transition: width .16s linear; }
 .skip-skill.is-window-open:not(.is-ready) { border-color: rgba(255,173,69,.4); border-left-color: rgba(255,150,63,.8); }
 .skip-skill.is-window-open:not(.is-ready) .skip-skill-status { color: #a86c2e; }
-.skip-skill.is-ready {
-  border-color: rgba(209,133,61,.38);
+.skip-skill.is-ready:not(:disabled) {
+  border-color: rgba(209,133,61,.5);
   border-left-color: var(--hud-orange);
-  box-shadow: 0 2px 7px rgba(11,28,44,.12), inset 0 1px rgba(255,255,255,.78), 0 0 6px rgba(255,158,60,.14);
+  animation: skip-skill-ready-pulse 2s ease-in-out infinite;
 }
-.skip-skill.is-ready .skip-skill-icon,
-.skip-skill.is-ready .skip-skill-status { color: #a85d1e; }
+.skip-skill.is-ready:not(:disabled) .skip-skill-icon { color: #c66d20; text-shadow: 0 0 6px rgba(255,151,61,.28); }
+.skip-skill.is-ready:not(:disabled) .skip-skill-status { color: #a85d1e; font-weight: 760; }
+.skip-skill.is-ready:not(:disabled) .skip-skill-status::before { display: inline-block; width: 5px; height: 5px; margin-right: 4px; border-radius: 50%; background: currentColor; box-shadow: 0 0 5px rgba(255,151,61,.42); content: ''; vertical-align: 1px; }
 .skip-skill:focus-visible { outline: 3px solid #438bff; outline-offset: 3px; }
+@keyframes skip-skill-ready-pulse {
+  0%, 100% { box-shadow: 0 2px 7px rgba(11,28,44,.12), inset 0 1px rgba(255,255,255,.78), 0 0 4px rgba(255,158,60,.12); }
+  50% { box-shadow: 0 2px 7px rgba(11,28,44,.12), inset 0 1px rgba(255,255,255,.78), 0 0 10px 1px rgba(255,158,60,.28); }
+}
 
 @media (max-width: 600px) {
-  .skip-skill { right: 10px; bottom: 12px; width: 72px; height: 70px; grid-template-rows: 17px 20px 11px 3px; gap: 2px; padding: 5px 6px 4px; }
-  .skip-skill-icon { font-size: 16px; }
-  .skip-skill-heading strong { font-size: 9px; }
-  .skip-skill-count { font-size: 16px; }
-  .skip-skill-status { font-size: 7px; }
+  .skip-skill { right: 10px; bottom: 12px; width: 84px; height: 82px; grid-template-rows: 19px 23px 13px 4px; gap: 3px; padding: 7px 8px 6px; border-radius: 12px 9px 12px 9px; }
+  .skip-skill-icon { font-size: 18px; }
+  .skip-skill-heading strong { font-size: 10px; }
+  .skip-skill-count { font-size: 19px; }
+  .skip-skill-status { font-size: 8px; }
 }
 @media (max-width: 350px) {
-  .skip-skill { right: 8px; bottom: 10px; width: 68px; height: 67px; grid-template-rows: 16px 19px 10px 3px; padding: 5px; }
-  .skip-skill-icon { font-size: 15px; }
-  .skip-skill-count { font-size: 15px; }
+  .skip-skill { right: 8px; bottom: 10px; width: 78px; height: 76px; grid-template-rows: 18px 22px 12px 4px; gap: 2px; padding: 6px; border-radius: 11px 8px 11px 8px; }
+  .skip-skill-icon { font-size: 17px; }
+  .skip-skill-count { font-size: 17px; }
+  .skip-skill-status { font-size: 7px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .skip-skill.is-ready:not(:disabled) { animation: none; }
 }
 
 /* Independent pause-menu audio controls; the sliders stay inside the existing card. */
