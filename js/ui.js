@@ -2176,7 +2176,7 @@ export function createUI(onAction) {
     skipSkillCount.textContent = skipStatus.charges + '/' + skipStatus.maxCharges;
     skipSkillStatus.textContent = state.mode === 'PAUSED'
       ? '暫停中'
-      : skipStatus.isReady ? '可使用'
+      : skipStatus.isReady ? '可用'
       : skipStatus.windowOpen ? (skipStatus.charges > 0 ? '不可使用' : '未充能')
       : skipStatus.nextMonsterFloor === null ? '無目標' : hasMaxSkipCharges ? 'MAX' : '待命';
     skipSkillEnergy.style.width = energyPercent.toFixed(2) + '%';
