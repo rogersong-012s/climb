@@ -2,6 +2,13 @@ import { UI_TEXT } from './config.js';
 
 const MAX_DEBUFF_SEVERITY = 3;
 const DEBUFF_EXPIRY_EPSILON = 1e-8;
+const LOW_BLOOD_SUGAR_DEBUFF_ID = 'LOW_BLOOD_SUGAR';
+const HEART_PALPITATIONS_DEBUFF_ID = 'HEART_PALPITATIONS';
+
+function resetHeartPalpitationsClock(state) {
+  state.heartPalpitationsUntilWobbleMs = null;
+  state.heartPalpitationsWobbleRemainingMs = 0;
+}
 
 export function getActiveDebuffs(state) {
   return Object.values(state.debuffs ?? {});
@@ -14,6 +21,8 @@ export function hasDebuff(state, type) {
 export function removeDebuff(state, type) {
   if (!hasDebuff(state, type)) return false;
   delete state.debuffs[type];
+  if (type === LOW_BLOOD_SUGAR_DEBUFF_ID) state.lowBloodSugarRhythmBallCount = 0;
+  if (type === HEART_PALPITATIONS_DEBUFF_ID) resetHeartPalpitationsClock(state);
   return true;
 }
 
@@ -23,6 +32,12 @@ export function applyDebuff(state, debuff) {
 
   state.debuffs ??= {};
   const existing = state.debuffs[debuff.type];
+  if (debuff.type === LOW_BLOOD_SUGAR_DEBUFF_ID && !existing) {
+    state.lowBloodSugarRhythmBallCount = 0;
+  }
+  if (debuff.type === HEART_PALPITATIONS_DEBUFF_ID && !existing) {
+    resetHeartPalpitationsClock(state);
+  }
   const next = {
     type: debuff.type,
     severity: existing
@@ -46,6 +61,8 @@ export function consumeDebuffDistance(state, climbedFloors) {
     }
     if (debuff.remainingFloors <= DEBUFF_EXPIRY_EPSILON) {
       delete debuffs[type];
+      if (type === LOW_BLOOD_SUGAR_DEBUFF_ID) state.lowBloodSugarRhythmBallCount = 0;
+      if (type === HEART_PALPITATIONS_DEBUFF_ID) resetHeartPalpitationsClock(state);
       expiredAny = true;
     }
   }
@@ -59,6 +76,29 @@ export function applySolutionEffect(state, solution, { debuffAlreadyApplied = fa
         return { message: UI_TEXT.debuffCured, kind: 'success', debuffCured: true };
       }
       return { message: UI_TEXT.qtePassed, kind: 'success', debuffCured: false };
+    case 'REDUCE_DEBUFF_DURATION': {
+      const debuff = state.debuffs?.[solution.debuffType];
+      const multiplier = Number(solution.durationMultiplier);
+      if (!debuff || !Number.isFinite(multiplier) || multiplier <= 0) {
+        return { message: UI_TEXT.qtePassed, kind: 'success', debuffCured: false };
+      }
+      debuff.remainingFloors *= multiplier;
+      if (debuff.remainingFloors <= DEBUFF_EXPIRY_EPSILON) {
+        removeDebuff(state, solution.debuffType);
+        return { message: UI_TEXT.debuffCured, kind: 'success', debuffCured: true };
+      }
+      return { message: UI_TEXT.qtePassed, kind: 'success', debuffCured: false };
+    }
+    case 'CURE_AND_APPLY_DEBUFF': {
+      const debuffCured = removeDebuff(state, solution.debuffType);
+      const debuffApplied = solution.debuff ? applyDebuff(state, solution.debuff) : null;
+      return {
+        message: debuffCured ? UI_TEXT.debuffCured : UI_TEXT.qtePassed,
+        kind: 'success',
+        debuffCured,
+        debuffApplied: Boolean(debuffApplied)
+      };
+    }
     case 'PAN_ATTACK':
       if (!debuffAlreadyApplied) applyDebuff(state, solution.debuff);
       return { message: UI_TEXT.monsterWon, kind: 'success' };

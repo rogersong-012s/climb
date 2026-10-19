@@ -76,6 +76,7 @@ export const GAME_CONFIG = Object.freeze({
   minClimbSpeed: 0.1,
   maxClimbSpeed: 0.3,
   hitSpeedBonus: 0.02,
+  painClimbSpeedMultiplier: 0.8,
   monsterDefeatSpeedBonus: 0.01,
   monsterDefeatMaxSpeedBonus: 0.015,
   skipSkillMaxCharges: 3,
@@ -99,10 +100,9 @@ export const GAME_CONFIG = Object.freeze({
   initialHitZoneWidth: 0.3, // Timing tolerance as a fraction of one beat.
   hitZoneShrinkPerCombo: 0.01,
   minHitZoneWidth: 0.18,
-  fatigueHitZonePenalty: 0.04,
-  fatigueMinHitZoneWidth: 0.14,
   rhythmBeatDurationMs: 500,
   rhythmMoveSpeedMultiplier: 1.3,
+  obesityClimbRewardMultiplier: 0.5,
   perfectRhythmSpeedBurstBonus: 0.1,
   perfectRhythmSpeedBurstDurationMs: 400,
   rhythmInputDebounceMs: 70,
@@ -111,6 +111,14 @@ export const GAME_CONFIG = Object.freeze({
   rhythmReadyRingStartScale: 1.9,
   rhythmReadyFlashMs: 100,
   rhythmRespawnDelayBeats: 1,
+  heartPalpitationsWobbleIntervalMs: 1800,
+  heartPalpitationsWobbleDurationMs: 250,
+  heartPalpitationsWobbleXAmplitudePx: 10,
+  heartPalpitationsWobbleYAmplitudePx: 5,
+  heartPalpitationsMobileAmplitudeScale: 0.6,
+  heartPalpitationsReducedAmplitudeScale: 0.4,
+  lowBloodSugarDurationFloors: 5,
+  lowBloodSugarRhythmInterval: 4,
   purpleRhythmStartOffsetBeats: 1,
   rhythmBallEdgeGapPx: 12,
   rhythmOrbApproachRangeFloors: 0.5,
@@ -124,11 +132,9 @@ export const GAME_CONFIG = Object.freeze({
   ]),
   // Keep weights centralized so future rhythm types can be tuned without changing selection logic.
   rhythmTypeWeights: Object.freeze({ RED: 1, BLUE: 1, YELLOW: 1, GREEN: 1, PURPLE: 1 }),
-  monsterQteDurationMs: 6000,
-  monsterQteDurationMultiplier: 2 / 3,
+  monsterQteDurationMs: 2900,
   monsterQteFailureKnockbackFloors: 3,
   monsterQteFailureNoticeDurationMs: 1000,
-  combatDefenseRecoveryQteDurationMs: 4000, // Current encounter QTE duration after the 2/3 multiplier.
   monsterEntranceShakeDurationMs: 300,
   monsterBaseHp: 100,
   monsterHpIncrement: 5,
@@ -190,6 +196,11 @@ export const GAME_CONFIG = Object.freeze({
   monsterDebuffRevealDurationMs: 450,
   monsterDebuffToAnswerDelayMs: 400,
   monsterAnswerPreviewDurationMs: 1800,
+  qteItemEntranceDurationMs: 200,
+  qteItemMessageEntranceDurationMs: 250,
+  qteItemHoldDurationMs: 1500,
+  qteItemFadeDurationMs: 200,
+  qteItemWhiteTransitionDurationMs: 400,
   debuffCureFlashDurationMs: 400,
   debuffCureFlashCount: 2,
   qteLetterMin: 8,
@@ -197,9 +208,15 @@ export const GAME_CONFIG = Object.freeze({
   bestRecordStorageKey: 'dengfeng-zaoji-best-time-v1',
   feedbackDurationMs: 800,
   debuffs: {
+    // Retained for compatibility with older saved/debug states; no current
+    // scheduled monster applies this legacy movement penalty.
     SORE: { name: '痠痛', description: '節奏球移動速度降低', icon: '〰', speedMultiplier: 0.72 },
+    BLACK_SPOTS: { name: '黑斑', description: '節奏 BAR 出現黑斑視覺干擾', icon: '◉' },
     BLUR: { name: '視野模糊', description: '節奏軌道微微模糊', icon: '◌', blurPx: 1.3 },
-    FATIGUE: { name: '疲勞', description: '節奏判定區額外縮小', icon: '…', hitZonePenalty: 0.04 }
+    OBESITY: { name: '肥胖', description: '一般攀登節奏全成功的加速獎勵減半', icon: '⬟' },
+    LOW_BLOOD_SUGAR: { name: '低血糖', description: '每四顆攀登節奏球有一顆停用', icon: '◌' },
+    PAIN: { name: '疼痛', description: '最終攀登速度與速度上限降低 20%', icon: '✦' },
+    HEART_PALPITATIONS: { name: '心悸', description: '節奏 BAR 每 1.8 秒明顯震動一次', icon: '♡' }
   }
 });
 

@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 150" role="img" aria-labelledby="title desc">
+  <title id="title">DIET 餐盤</title>
+  <desc id="desc">以餐盤與餐具表示的節食道具。</desc>
+  <defs>
+    <linearGradient id="plate" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fffdf7"/>
+      <stop offset="1" stop-color="#dce8f1"/>
+    </linearGradient>
+  </defs>
+  <ellipse cx="91" cy="131" rx="56" ry="9" fill="#20364c" opacity=".16"/>
+  <circle cx="91" cy="76" r="57" fill="#ffb34d" stroke="#fff8e8" stroke-width="7"/>
+  <circle cx="91" cy="76" r="43" fill="url(#plate)" stroke="#438bff" stroke-width="4"/>
+  <path d="M73 87c5-15 12-23 21-23s17 8 22 23c-7 7-14 10-22 10s-15-3-21-10Z" fill="#66b987" stroke="#398c67" stroke-width="3" stroke-linejoin="round"/>
+  <circle cx="80" cy="72" r="6" fill="#f26860"/>
+  <circle cx="103" cy="71" r="6" fill="#f26860"/>
+  <path d="M130 41v72m-8-72v23m8-23v23m8-23v23m-8-23v23m-7 0h14" fill="none" stroke="#20364c" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M42 43v30m-8-30v11m8-11v11m8-11v11m-8 19v40" fill="none" stroke="#20364c" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

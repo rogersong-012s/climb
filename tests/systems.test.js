@@ -102,7 +102,7 @@ test('hit zone shrinks symmetrically by width and never crosses its configured f
   assert.equal(hitZoneWidthForCombo(0), 0.3);
   assert.equal(hitZoneWidthForCombo(12), 0.18);
   assert.equal(hitZoneWidthForCombo(30), GAME_CONFIG.minHitZoneWidth);
-  assert.equal(hitZoneWidthForCombo(30, 'FATIGUE'), GAME_CONFIG.fatigueMinHitZoneWidth);
+  assert.equal(hitZoneWidthForCombo(30, 'OBESITY'), GAME_CONFIG.minHitZoneWidth);
   assert.equal(hitZoneWidthForCombo(5, 'BLUR'), 0.25);
 });
 
@@ -150,9 +150,10 @@ test('QTE supports different solution lengths, repeated letters, and stable tile
   assert.equal(qte.input, 'ABBA');
 });
 
-test('QTE data supports each requested test monster and all solution lengths are data driven', () => {
-  assert.deepEqual(MONSTERS.map((monster) => monster.id), ['muscle', 'eyes', 'tired']);
-  assert.ok(MONSTERS.some((monster) => monster.solutions.some((solution) => solution.word === 'COFFEE')));
+test('QTE data includes the current monster roster and data-driven solution lengths', () => {
+  assert.deepEqual(MONSTERS.map((monster) => monster.id), ['muscle', 'eyes', 'pain', 'obese']);
+  assert.ok(MONSTERS.some((monster) => monster.solutions.some((solution) => solution.word === 'YSS+2')));
+  assert.ok(MONSTERS.some((monster) => monster.solutions.some((solution) => solution.word === 'DIET')));
   assert.ok(MONSTERS.every((monster) => monster.solutions.some((solution) => solution.effect === 'CURE')));
 });
 

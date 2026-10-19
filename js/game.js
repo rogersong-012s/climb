@@ -11,7 +11,8 @@ import { stairNodeAt } from './stairs.js';
 const MONSTER_EVENT_PHASES = new Set([
   'EVENT_WARNING', 'MONSTER_ENTRANCE', 'MONSTER_CAST', 'MONSTER_IMPACT',
   'ATTACK_TO_DEBUFF_DELAY', 'DEBUFF_REVEAL', 'DEBUFF_TO_ANSWER_DELAY', 'ANSWER_PREVIEW',
-  'QTE_FAILURE_KNOCKBACK'
+  'QTE_FAILURE_KNOCKBACK', 'QTE_ITEM_REVEAL', 'QTE_ITEM_MESSAGE', 'QTE_ITEM_HOLD',
+  'QTE_ITEM_FADE', 'QTE_ITEM_TRANSITION'
 ]);
 const COMBAT_TIMED_PHASES = new Set([
   'COMBAT_ATTACK_INTRO', 'COMBAT_ATTACK_SETTLE', 'COMBAT_DEFENSE_INTRO',
@@ -19,6 +20,7 @@ const COMBAT_TIMED_PHASES = new Set([
 ]);
 const COMBAT_MODES = new Set(['COMBAT_ATTACK', 'COMBAT_RAPID_TAP', 'COMBAT_DEFENSE', ...COMBAT_TIMED_PHASES]);
 const PAUSABLE_MODES = new Set(['CLIMBING', 'UPGRADE_SELECT', ...MONSTER_EVENT_PHASES, 'MONSTER_QTE', ...COMBAT_MODES]);
+const HEART_PALPITATION_TRACK_MODES = new Set(['CLIMBING', 'COMBAT_ATTACK', 'COMBAT_RAPID_TAP']);
 
 function freshState(bestTimeMs = null, antiDizzinessMode = ANTI_DIZZINESS_MODE.OFF) {
   const stairNode = stairNodeAt(GAME_CONFIG.startFloor);
@@ -73,6 +75,7 @@ function freshState(bestTimeMs = null, antiDizzinessMode = ANTI_DIZZINESS_MODE.O
     combo: 0,
     rhythmRound: null,
     rhythmRoundSerial: 0,
+    lowBloodSugarRhythmBallCount: 0,
     unlockedRhythmTypes: ['RED', 'BLUE'],
     collectedRhythmOrbs: [],
     rhythmOrbCollectSerial: 0,
@@ -84,7 +87,11 @@ function freshState(bestTimeMs = null, antiDizzinessMode = ANTI_DIZZINESS_MODE.O
     timerMs: 0,
     monsterEvents: [],
     activeQte: null,
+    qteItemUse: null,
     debuffs: {},
+    heartPalpitationsUntilWobbleMs: null,
+    heartPalpitationsWobbleRemainingMs: 0,
+    heartPalpitationsWobbleSerial: 0,
     feedback: null,
     stats: { hits: 0, misses: 0, qteWins: 0, qteLosses: 0, maxCombo: 0 },
     bestTimeMs,
@@ -106,7 +113,9 @@ function integrateClimbSpeed(speed, seconds) {
   return { speed: nextSpeed, distance };
 }
 
-function timeToClimbDistance(distance, speed, temporaryBonus = 0, bonusRemainingSeconds = 0) {
+function timeToClimbDistance(distance, speed, temporaryBonus = 0, bonusRemainingSeconds = 0, movementMultiplier = 1) {
+  const safeMultiplier = Math.max(1e-6, Number(movementMultiplier) || 1);
+  distance /= safeMultiplier;
   if (distance <= 0) return 0;
   if (temporaryBonus > 0 && bonusRemainingSeconds > 0) {
     const bonusSeconds = Math.max(0, bonusRemainingSeconds);
@@ -210,12 +219,47 @@ export function createGame(options = {}) {
       targetCount: round.hitBeats.length,
       mode,
       floor: state.progress,
-      timerMs: state.timerMs
+      timerMs: state.timerMs,
+      lowBloodSugarDisabled: Boolean(round.isLowBloodSugarDisabled)
     };
   }
 
   function effectiveClimbSpeed() {
-    return state.climbSpeed + (state.temporarySpeedBonusRemainingMs > 0 ? state.temporarySpeedBonus : 0);
+    return (Math.min(state.climbSpeed, state.maxClimbSpeed) +
+      (state.temporarySpeedBonusRemainingMs > 0 ? state.temporarySpeedBonus : 0)) * climbSpeedMultiplier();
+  }
+
+  function climbSpeedMultiplier() {
+    return state.debuffs?.PAIN ? GAME_CONFIG.painClimbSpeedMultiplier : 1;
+  }
+
+  function effectiveMaxClimbSpeed() {
+    return state.maxClimbSpeed * climbSpeedMultiplier();
+  }
+
+  function advanceHeartPalpitations(deltaMs) {
+    if (!state.debuffs?.HEART_PALPITATIONS) {
+      state.heartPalpitationsUntilWobbleMs = null;
+      state.heartPalpitationsWobbleRemainingMs = 0;
+      return;
+    }
+    if (state.heartPalpitationsUntilWobbleMs === null) {
+      state.heartPalpitationsUntilWobbleMs = GAME_CONFIG.heartPalpitationsWobbleIntervalMs;
+    }
+
+    let remainingMs = Math.max(0, deltaMs);
+    while (remainingMs > 1e-6) {
+      const untilWobble = Math.max(0, state.heartPalpitationsUntilWobbleMs ?? 0);
+      const elapsed = Math.min(remainingMs, untilWobble);
+      state.heartPalpitationsUntilWobbleMs = Math.max(0, untilWobble - elapsed);
+      state.heartPalpitationsWobbleRemainingMs = Math.max(0, state.heartPalpitationsWobbleRemainingMs - elapsed);
+      remainingMs -= elapsed;
+      if (state.heartPalpitationsUntilWobbleMs <= 1e-6) {
+        state.heartPalpitationsWobbleRemainingMs = GAME_CONFIG.heartPalpitationsWobbleDurationMs;
+        state.heartPalpitationsUntilWobbleMs = GAME_CONFIG.heartPalpitationsWobbleIntervalMs;
+        state.heartPalpitationsWobbleSerial += 1;
+      }
+    }
   }
 
   function clearTemporarySpeedBonus() {
@@ -223,8 +267,8 @@ export function createGame(options = {}) {
     state.temporarySpeedBonusRemainingMs = 0;
   }
 
-  function triggerPerfectClimbSpeedBurst() {
-    state.temporarySpeedBonus = GAME_CONFIG.perfectRhythmSpeedBurstBonus;
+  function triggerPerfectClimbSpeedBurst(rewardMultiplier = 1) {
+    state.temporarySpeedBonus = GAME_CONFIG.perfectRhythmSpeedBurstBonus * rewardMultiplier;
     state.temporarySpeedBonusRemainingMs = GAME_CONFIG.perfectRhythmSpeedBurstDurationMs;
   }
 
@@ -298,7 +342,7 @@ export function createGame(options = {}) {
     const effectiveMode = state.mode === 'PAUSED' ? state.resumeMode : state.mode;
     const judgmentMultiplier = 1 + state.runUpgrades.rhythmJudgmentLevel * GAME_CONFIG.upgradeRhythmJudgmentBonus;
     if (effectiveMode === 'COMBAT_ATTACK') return hitZoneWidthForCombo(0, null, judgmentMultiplier);
-    return hitZoneWidthForCombo(state.combo, state.debuffs.FATIGUE ? 'FATIGUE' : null, judgmentMultiplier);
+    return hitZoneWidthForCombo(state.combo, null, judgmentMultiplier);
   }
 
   function drawUpgradeChoices() {
@@ -327,7 +371,7 @@ export function createGame(options = {}) {
 
   function startNextRhythmRound() {
     state.rhythmRoundSerial += 1;
-    state.rhythmRound = createRhythmRound(
+    const round = createRhythmRound(
       random,
       state.rhythmRoundSerial,
       rhythmBeatDurationForCurrentDebuff(),
@@ -335,6 +379,12 @@ export function createGame(options = {}) {
       state.unlockedRhythmTypes,
       GAME_CONFIG.rhythmTypeWeights
     );
+    if (state.mode === 'CLIMBING' && state.debuffs.LOW_BLOOD_SUGAR) {
+      state.lowBloodSugarRhythmBallCount += 1;
+      round.isLowBloodSugarDisabled =
+        state.lowBloodSugarRhythmBallCount % GAME_CONFIG.lowBloodSugarRhythmInterval === 0;
+    }
+    state.rhythmRound = round;
     notifyDebug('onRhythmRoundCreated', rhythmDebugData(state.rhythmRound));
   }
 
@@ -366,6 +416,7 @@ export function createGame(options = {}) {
         GAME_CONFIG.rhythmTypeWeights
       );
       replacement.readyElapsedMs = round.readyElapsedMs;
+      replacement.isLowBloodSugarDisabled = Boolean(round.isLowBloodSugarDisabled);
       state.rhythmRound = replacement;
       notifyDebug('onRhythmRoundCreated', rhythmDebugData(replacement));
     }
@@ -402,9 +453,12 @@ export function createGame(options = {}) {
     }
 
     if (isPerfect) {
-      applyHit(state);
+      const rewardMultiplier = state.mode === 'CLIMBING' && state.debuffs.OBESITY
+        ? GAME_CONFIG.obesityClimbRewardMultiplier
+        : 1;
+      applyHit(state, rewardMultiplier);
       if (state.mode === 'CLIMBING') {
-        triggerPerfectClimbSpeedBurst();
+        triggerPerfectClimbSpeedBurst(rewardMultiplier);
         updateSkipSkillWindow();
       }
       setFeedback(UI_TEXT.hit, 'hit');
@@ -710,6 +764,17 @@ export function createGame(options = {}) {
 
       const durationMs = rhythmRoundDurationMs(round);
       const untilFinishMs = Math.max(0, durationMs - round.elapsedMs);
+      if (round.isLowBloodSugarDisabled) {
+        const elapsedMs = Math.min(remainingMs, untilFinishMs);
+        round.elapsedMs += elapsedMs;
+        remainingMs -= elapsedMs;
+        if (round.elapsedMs + 1e-6 >= durationMs) {
+          round.elapsedMs = durationMs;
+          finishRhythmRound(round);
+          continue;
+        }
+        break;
+      }
       if (round.phase === RHYTHM_PHASE.RESOLVED) {
         const elapsedMs = Math.min(remainingMs, untilFinishMs);
         round.elapsedMs += elapsedMs;
@@ -770,17 +835,18 @@ export function createGame(options = {}) {
     const integrated = integrateClimbSpeed(state.climbSpeed, deltaMs / 1000);
     state.climbSpeed = Math.max(GAME_CONFIG.minClimbSpeed, integrated.speed);
     const boostedMs = Math.min(deltaMs, state.temporarySpeedBonusRemainingMs);
-    const distance = exactDistance ?? integrated.distance +
+    const rawDistance = integrated.distance +
       (state.temporarySpeedBonusRemainingMs > 0
         ? state.temporarySpeedBonus * boostedMs / 1000
         : 0);
+    const distance = exactDistance ?? rawDistance * climbSpeedMultiplier();
     state.temporarySpeedBonusRemainingMs = Math.max(0, state.temporarySpeedBonusRemainingMs - deltaMs);
     if (state.temporarySpeedBonusRemainingMs <= 0) state.temporarySpeedBonus = 0;
     state.progress = Math.min(GAME_CONFIG.maxFloor, previousProgress + distance);
     state.stepPhase = (state.stepPhase + distance / GAME_CONFIG.stepCycleDistanceFloors) % 1;
+    consumeDebuffDistance(state, state.progress - previousProgress);
     advanceRhythm(deltaMs);
     updateSkipSkillWindow();
-    consumeDebuffDistance(state, state.progress - previousProgress);
   }
 
   function setFeedback(message, kind = 'neutral') {
@@ -881,6 +947,7 @@ export function createGame(options = {}) {
     state.mode = 'RESULT';
     state.activeQte = null;
     state.preparedQte = null;
+    state.qteItemUse = null;
     state.activeMonster = null;
     state.activeMonsterEvent = null;
     state.monsterHp = null;
@@ -900,37 +967,55 @@ export function createGame(options = {}) {
   }
 
   function resolveSolution(solution) {
-    if (state.activeQte?.context === QTE_CONTEXT.DEFENSE_RECOVERY) {
-      state.stats.qteWins += 1;
-      state.activeQte = null;
-      state.preparedQte = null;
-      state.eventPhaseElapsedMs = 0;
-      state.eventPhaseDurationMs = 0;
-      // Emergency success only prevents a new debuff; it must not cure an
-      // encounter debuff that was already active before this defense round.
-      state.monsterDebuffApplied = false;
-      beginCombatAttackIntro();
-      setFeedback('補救成功，沒有新增負面狀態', 'success');
-      return;
-    }
-
-    const effectResult = applySolutionEffect(state, solution, {
+    const context = state.activeQte?.context === QTE_CONTEXT.DEFENSE_RECOVERY
+      ? QTE_CONTEXT.DEFENSE_RECOVERY
+      : QTE_CONTEXT.ENCOUNTER;
+    state.qteItemUse = {
+      context,
+      solution,
+      itemId: solution.itemId ?? null,
+      word: solution.word ?? '',
+      message: context === QTE_CONTEXT.DEFENSE_RECOVERY
+        ? (solution.emergencyMessage ?? '成功避免這次負面狀態')
+        : (solution.itemMessage ?? ('成功完成「' + (solution.word ?? '') + '」解法！')),
       debuffAlreadyApplied: state.monsterDebuffApplied
-    });
-    if (effectResult.debuffCured) state.debuffCureSerial += 1;
+    };
     state.stats.qteWins += 1;
     state.activeQte = null;
     state.preparedQte = null;
-    state.monsterDebuffApplied = false;
-    state.eventPhaseElapsedMs = 0;
-    state.eventPhaseDurationMs = 0;
+    state.feedback = null;
     state.rhythmTapSerial = rhythmTapSerial;
     state.rhythmFeedbackSerial = rhythmFeedbackSerial;
     state.rhythmLaunchSerial = rhythmLaunchSerial;
     lastRhythmInputTimerMs = -Infinity;
+    enterMonsterPhase('QTE_ITEM_REVEAL', GAME_CONFIG.qteItemEntranceDurationMs);
+  }
+
+  function finishQteItemUse() {
+    const itemUse = state.qteItemUse;
+    if (!itemUse) return;
+
+    let effectResult;
+    if (itemUse.context === QTE_CONTEXT.DEFENSE_RECOVERY) {
+      // Recovery success prevents a new debuff only; it never cures or
+      // reapplies an encounter debuff that was already active.
+      effectResult = {
+        message: itemUse.solution.emergencyMessage ?? '補救成功，沒有新增負面狀態',
+        kind: 'success',
+        debuffCured: false
+      };
+      state.combatDefenseRound = null;
+    } else {
+      effectResult = applySolutionEffect(state, itemUse.solution, {
+        debuffAlreadyApplied: itemUse.debuffAlreadyApplied
+      });
+      if (effectResult.debuffCured) state.debuffCureSerial += 1;
+    }
+
+    state.qteItemUse = null;
+    state.monsterDebuffApplied = false;
 
     if (state.activeMonster) {
-      state.combatDefenseRound = null;
       state.combatPendingDamage = 0;
       beginCombatAttackIntro();
       setFeedback(effectResult.message, effectResult.debuffCured ? 'success' : effectResult.kind);
@@ -1184,7 +1269,7 @@ export function createGame(options = {}) {
     state.activeQte = createQte(
       monster,
       random,
-      GAME_CONFIG.combatDefenseRecoveryQteDurationMs,
+      GAME_CONFIG.monsterQteDurationMs,
       { context: QTE_CONTEXT.DEFENSE_RECOVERY, solutions: [correctSolution] }
     );
     state.activeQte.monsterHp = state.monsterHp;
@@ -1212,11 +1297,11 @@ export function createGame(options = {}) {
     state.combatRapidTap = null;
     state.combatPendingDamage = 0;
     state.activeQte = null;
-    const baseQteDurationMs = state.activeMonster.qteDurationMs ?? GAME_CONFIG.monsterQteDurationMs;
+    state.qteItemUse = null;
     state.preparedQte = createQte(
       state.activeMonster,
       random,
-      Math.round(baseQteDurationMs * GAME_CONFIG.monsterQteDurationMultiplier),
+      GAME_CONFIG.monsterQteDurationMs,
       { context: QTE_CONTEXT.ENCOUNTER }
     );
     state.preparedQte.monsterHp = state.monsterHp;
@@ -1290,6 +1375,11 @@ export function createGame(options = {}) {
       case 'DEBUFF_TO_ANSWER_DELAY': beginMonsterAnswerPreviewDisplay(); break;
       case 'ANSWER_PREVIEW': beginMonsterQte(); break;
       case 'QTE_FAILURE_KNOCKBACK': finishQteFailureNotice(); break;
+      case 'QTE_ITEM_REVEAL': enterMonsterPhase('QTE_ITEM_MESSAGE', GAME_CONFIG.qteItemMessageEntranceDurationMs); break;
+      case 'QTE_ITEM_MESSAGE': enterMonsterPhase('QTE_ITEM_HOLD', GAME_CONFIG.qteItemHoldDurationMs); break;
+      case 'QTE_ITEM_HOLD': enterMonsterPhase('QTE_ITEM_FADE', GAME_CONFIG.qteItemFadeDurationMs); break;
+      case 'QTE_ITEM_FADE': enterMonsterPhase('QTE_ITEM_TRANSITION', GAME_CONFIG.qteItemWhiteTransitionDurationMs); break;
+      case 'QTE_ITEM_TRANSITION': finishQteItemUse(); break;
       default: break;
     }
   }
@@ -1355,6 +1445,7 @@ export function createGame(options = {}) {
     // the newly spawned ball, even if a long frame also consumed its ready beat.
     if (state.rhythmRound !== roundBeforeUpdate) return { status: 'ignored' };
     const round = state.rhythmRound;
+    if (round?.isLowBloodSugarDisabled) return { status: 'ignored' };
     if (!round || round.phase !== RHYTHM_PHASE.MOVING) return { status: 'ignored' };
     if (round.inputLocked) return { status: 'ignored' };
     if (round.pressCount >= round.hitBeats.length) {
@@ -1449,6 +1540,11 @@ export function createGame(options = {}) {
     previousFrameTime = now;
     if (state.mode !== 'CLIMBING' && state.mode !== 'MONSTER_QTE' &&
         !MONSTER_EVENT_PHASES.has(state.mode) && !COMBAT_MODES.has(state.mode)) return;
+    if (HEART_PALPITATION_TRACK_MODES.has(state.mode)) {
+      advanceHeartPalpitations(deltaMs);
+    } else if (state.mode !== 'PAUSED') {
+      state.heartPalpitationsWobbleRemainingMs = 0;
+    }
 
     let remainingMs = deltaMs;
     while (remainingMs > 1e-6) {
@@ -1566,7 +1662,8 @@ export function createGame(options = {}) {
         distanceToBoundary,
         state.climbSpeed,
         state.temporarySpeedBonus,
-        state.temporarySpeedBonusRemainingMs / 1000
+        state.temporarySpeedBonusRemainingMs / 1000,
+        climbSpeedMultiplier()
       ) * 1000;
       const reachesBoundary = boundaryTimeMs <= remainingMs + 1e-6;
       const elapsedMs = reachesBoundary ? Math.max(0, boundaryTimeMs) : remainingMs;
@@ -1605,6 +1702,10 @@ export function createGame(options = {}) {
       if (!state.isLandingPaused && !state.isTurning) startPendingMonsterEvent();
     }
 
+    if (state.mode !== 'PAUSED' && !HEART_PALPITATION_TRACK_MODES.has(state.mode)) {
+      state.heartPalpitationsWobbleRemainingMs = 0;
+    }
+
     if (state.feedback && state.timerMs >= state.feedback.untilMs) state.feedback = null;
     if (state.rhythmOrbFeedback && state.timerMs >= state.rhythmOrbFeedback.toastUntilMs) {
       state.rhythmOrbFeedback = null;
@@ -1625,6 +1726,7 @@ export function createGame(options = {}) {
   return {
     getState: () => state,
     getEffectiveClimbSpeed: effectiveClimbSpeed,
+    getEffectiveMaxClimbSpeed: effectiveMaxClimbSpeed,
     getSkipSkillStatus,
     getBallPosition: currentBallPosition,
     getHitZoneWidth: currentHitZoneWidth,

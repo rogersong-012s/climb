@@ -40,6 +40,8 @@ function makeStats() {
   const colors = Object.fromEntries(Object.keys(RHYTHM_TYPES).map((typeId) => [typeId, {
     ballsGenerated: 0,
     ballsCompleted: 0,
+    disabledBallsGenerated: 0,
+    disabledBallsCompleted: 0,
     perfectBalls: 0,
     successfulTargets: 0,
     resolvedTargets: 0,
@@ -54,6 +56,8 @@ function makeStats() {
   return {
     ballsGenerated: 0,
     ballsCompleted: 0,
+    lowBloodSugarDisabledBallsGenerated: 0,
+    lowBloodSugarDisabledBallsCompleted: 0,
     normalBallsGenerated: 0,
     normalBallsCompleted: 0,
     battleBallsGenerated: 0,
@@ -110,7 +114,7 @@ export function createDebugController() {
       panel = document.createElement('aside');
       panel.className = 'debug-status-panel';
       panel.setAttribute('aria-label', 'DEBUG MODE 狀態');
-      panel.innerHTML = '<strong></strong><span></span><span></span><span></span>';
+      panel.innerHTML = '<strong></strong><span></span><span></span><span></span><span></span>';
       arena.append(panel);
     }
     console.info('[DEBUG MODE] enabled · whole-ball perfect rate:', config.rhythmPerfectRate);
@@ -121,25 +125,32 @@ export function createDebugController() {
     let record = roundRecords.get(key);
     if (!record) {
       const battle = details.mode === 'COMBAT_ATTACK';
+      const disabled = Boolean(details.lowBloodSugarDisabled) && !battle;
       record = {
         roundId: key,
         typeId: details.typeId,
         targetCount: details.targetCount,
         battle,
+        disabled,
         resolved: false,
         completed: false,
         cancelled: false,
         perfect: false
       };
       roundRecords.set(key, record);
-      stats.ballsGenerated += 1;
-      if (battle) stats.battleBallsGenerated += 1;
-      else stats.normalBallsGenerated += 1;
-      if (stats.colors[details.typeId]) stats.colors[details.typeId].ballsGenerated += 1;
-      roundDecisions.set(key, {
-        perfect: Math.random() < config.rhythmPerfectRate,
-        missSample: Math.random()
-      });
+      if (disabled) {
+        stats.lowBloodSugarDisabledBallsGenerated += 1;
+        if (stats.colors[details.typeId]) stats.colors[details.typeId].disabledBallsGenerated += 1;
+      } else {
+        stats.ballsGenerated += 1;
+        if (battle) stats.battleBallsGenerated += 1;
+        else stats.normalBallsGenerated += 1;
+        if (stats.colors[details.typeId]) stats.colors[details.typeId].ballsGenerated += 1;
+        roundDecisions.set(key, {
+          perfect: Math.random() < config.rhythmPerfectRate,
+          missSample: Math.random()
+        });
+      }
     } else if (!record.resolved && !record.completed) {
       // A rhythm orb can change the type of a still-stationary ball before it launches.
       if (record.typeId !== details.typeId) {
@@ -192,6 +203,11 @@ export function createDebugController() {
     if (!record || stats.completedRoundIds.has(key)) return;
     stats.completedRoundIds.add(key);
     record.completed = true;
+    if (record.disabled) {
+      stats.lowBloodSugarDisabledBallsCompleted += 1;
+      if (stats.colors[record.typeId]) stats.colors[record.typeId].disabledBallsCompleted += 1;
+      return;
+    }
     stats.ballsCompleted += 1;
     if (record.battle) stats.battleBallsCompleted += 1;
     else stats.normalBallsCompleted += 1;
@@ -279,7 +295,7 @@ export function createDebugController() {
   function runRhythm(game, state, timestamp) {
     if (!['CLIMBING', 'COMBAT_ATTACK'].includes(state.mode)) return;
     const round = state.rhythmRound;
-    if (!round || round.phase !== 'MOVING' || round.inputLocked) return;
+    if (!round || round.isLowBloodSugarDisabled || round.phase !== 'MOVING' || round.inputLocked) return;
     recordCreatedRound({
       roundId: round.id,
       typeId: round.typeId,
@@ -381,6 +397,7 @@ export function createDebugController() {
 
   function getSnapshot(state) {
     const threshold = GAME_CONFIG.skipSkillEnergyRequired;
+    const painMultiplier = state?.debuffs?.PAIN ? GAME_CONFIG.painClimbSpeedMultiplier : 1;
     const theoreticalCharges = Math.floor((stats.totalEnergy + 1e-8) / threshold);
     const wastedEnergy = Math.max(0,
       stats.totalEnergy - stats.skillChargesEarned * threshold - (state?.skipSkillEnergy ?? 0));
@@ -394,6 +411,8 @@ export function createDebugController() {
       ballsCompleted: completed,
       normalBallsGenerated: stats.normalBallsGenerated,
       normalBallsCompleted: stats.normalBallsCompleted,
+      lowBloodSugarDisabledBallsGenerated: stats.lowBloodSugarDisabledBallsGenerated,
+      lowBloodSugarDisabledBallsCompleted: stats.lowBloodSugarDisabledBallsCompleted,
       battleBallsGenerated: stats.battleBallsGenerated,
       battleBallsCompleted: stats.battleBallsCompleted,
       normalPerfectBalls: stats.normalPerfectBalls,
@@ -411,8 +430,10 @@ export function createDebugController() {
       gameTimeSeconds: (state?.timerMs ?? 0) / 1000,
       baseSpeed: state?.climbSpeed ?? 0,
       maxSpeed: state?.maxClimbSpeed ?? 0,
+      effectiveSpeedCap: (state?.maxClimbSpeed ?? 0) * painMultiplier,
       finalEffectiveSpeed: state?.climbSpeed !== undefined
-        ? state.climbSpeed + ((state.temporarySpeedBonusRemainingMs ?? 0) > 0 ? state.temporarySpeedBonus : 0)
+        ? (Math.min(state.climbSpeed, state.maxClimbSpeed) +
+          ((state.temporarySpeedBonusRemainingMs ?? 0) > 0 ? state.temporarySpeedBonus : 0)) * painMultiplier
         : 0,
       totalRhythmEnergy: stats.totalEnergy,
       theoreticalFullCharges: theoreticalCharges,
@@ -436,6 +457,8 @@ export function createDebugController() {
       color: typeId,
       ballsGenerated: entry.ballsGenerated,
       ballsCompleted: entry.ballsCompleted,
+      disabledBallsGenerated: entry.disabledBallsGenerated,
+      disabledBallsCompleted: entry.disabledBallsCompleted,
       perfectBalls: entry.perfectBalls,
       successfulTargets: entry.successfulTargets,
       resolvedTargets: entry.resolvedTargets,
@@ -513,6 +536,8 @@ export function createDebugController() {
     panel.children[2].textContent = '全成功 ' + stats.perfectBalls + '/' + completed + ' · ' + rate + '%';
     panel.children[3].textContent = '技能 ' + state.skipSkillCharges + '/' + GAME_CONFIG.skipSkillMaxCharges +
       (autoSkipPending ? ' · 待使用' : '');
+    panel.children[4].textContent = '低血糖停用球 ' + stats.lowBloodSugarDisabledBallsCompleted +
+      '/' + stats.lowBloodSugarDisabledBallsGenerated;
   }
 
   function reportMilestones(state) {

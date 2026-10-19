@@ -4,6 +4,7 @@ import { getActiveDebuffs } from './effects.js';
 import { QTE_CONTEXT } from './qte.js';
 import { RHYTHM_PHASE } from './rhythm.js';
 import { loadAudioSettings } from './audio-settings.js';
+import { QTE_ITEM_PRESENTATIONS } from './monsters.js';
 
 function formatTime(milliseconds) {
   const totalCs = Math.floor(Math.max(0, milliseconds) / 10);
@@ -1041,15 +1042,21 @@ function renderTurnScene(canvas, context, state, progress, stairGeometry) {
 
 export function createUI(onAction) {
   const byId = (id) => document.getElementById(id);
-  const sceneFloor = byId('scene-floor');
-  const sceneViewLabel = byId('scene-view-label');
-  const sceneTarget = byId('scene-target');
-  const sceneSignAFloor = byId('scene-sign-a-floor');
+  const floorProgress = byId('floor-progress');
+  const floorProgressFill = byId('floor-progress-fill');
+  const floorProgressCurrent = byId('floor-progress-current');
+  const floorProgressMilestones = Array.from(floorProgress.querySelectorAll('.floor-progress-milestone'));
+  const sceneSignAUp = byId('scene-sign-a-up');
+  const sceneSignADown = byId('scene-sign-a-down');
   const sceneSignBFloor = byId('scene-sign-b-floor');
   const timerValue = byId('timer-value');
   const speedNumber = byId('speed-number');
   const pauseButton = byId('pause-button');
   const track = byId('rhythm-track');
+  const trackShake = byId('rhythm-track-shake');
+  trackShake.style.setProperty('--heart-wobble-duration', GAME_CONFIG.heartPalpitationsWobbleDurationMs + 'ms');
+  let lastHeartWobbleProfile = '';
+  let lastHeartWobbleSerial = 0;
   const trackZones = byId('track-zones');
   const rhythmLabel = byId('rhythm-label');
   const ball = byId('rhythm-ball');
@@ -1081,6 +1088,13 @@ export function createUI(onAction) {
   const modalLayer = byId('modal-layer');
   const purifyFrame = byId('purify-frame');
   const qteLayer = byId('qte-layer');
+  Object.values(QTE_ITEM_PRESENTATIONS)
+    .filter((presentation) => presentation.visual === 'image' && presentation.assetPath)
+    .forEach((presentation) => {
+      const image = new Image();
+      image.decoding = 'async';
+      image.src = presentation.assetPath;
+    });
   const qteFailureNotice = byId('qte-failure-notice');
   const gameRoot = byId('game');
   const arena = byId('arena');
@@ -1099,6 +1113,7 @@ export function createUI(onAction) {
   let turnSceneResizeObserver = null;
   let lastMode = null;
   let lastQteObject = null;
+  let lastQteItemUse = null;
   let lastQteMessage = '';
   let lastCombo = 0;
   let lastAnnouncement = '';
@@ -1157,7 +1172,7 @@ export function createUI(onAction) {
     if (mode === 'CLIMBING' || mode === 'EVENT_WARNING' || mode === 'MONSTER_ENTRANCE' ||
         mode === 'MONSTER_CAST' || mode === 'MONSTER_IMPACT' || mode === 'ATTACK_TO_DEBUFF_DELAY' ||
         mode === 'DEBUFF_REVEAL' || mode === 'DEBUFF_TO_ANSWER_DELAY' || mode === 'ANSWER_PREVIEW' ||
-        mode === 'MONSTER_QTE' || mode === 'QTE_FAILURE_KNOCKBACK' || mode.startsWith('COMBAT_')) {
+        mode === 'MONSTER_QTE' || mode === 'QTE_FAILURE_KNOCKBACK' || mode.startsWith('QTE_ITEM_') || mode.startsWith('COMBAT_')) {
       modalLayer.hidden = true;
       modalLayer.innerHTML = '';
       return;
@@ -1239,6 +1254,26 @@ export function createUI(onAction) {
     }
     if (viewMode === state.stairViewMode) return state.stairNodeProgress;
     return state.stairNodeProgress + 0.5;
+  }
+
+  function updateWallFloorSigns(state) {
+    const zeroProgress = Math.max(
+      GAME_CONFIG.startFloor,
+      Math.min(GAME_CONFIG.maxFloor, viewNodeProgress(state, STAIR_VIEW_MODE.POINT_ZERO))
+    );
+    const zeroFloor = Math.floor(zeroProgress + 1e-8);
+    const upLabel = zeroFloor < GAME_CONFIG.maxFloor ? '↑ ' + (zeroFloor + 1) + 'F' : 'TOP';
+    const downLabel = '↓ ' + zeroFloor + 'F';
+    if (sceneSignAUp.textContent !== upLabel) sceneSignAUp.textContent = upLabel;
+    if (sceneSignADown.textContent !== downLabel) sceneSignADown.textContent = downLabel;
+
+    const halfProgress = Math.max(
+      GAME_CONFIG.startFloor,
+      Math.min(GAME_CONFIG.maxFloor, viewNodeProgress(state, STAIR_VIEW_MODE.POINT_FIVE))
+    );
+    const nextFloor = Math.min(GAME_CONFIG.maxFloor, Math.floor(halfProgress + 1e-8) + 1);
+    const halfLabel = nextFloor + 'F';
+    if (sceneSignBFloor.textContent !== halfLabel) sceneSignBFloor.textContent = halfLabel;
   }
 
   function sceneCameraAt(progress) {
@@ -1420,13 +1455,14 @@ export function createUI(onAction) {
       const button = document.createElement('button');
       button.type = 'button';
       button.className = 'letter-tile';
+      if (/^[+0-9]$/.test(tile.letter)) button.classList.add('is-symbol-tile');
       button.dataset.tileId = tile.id;
       button.textContent = tile.letter;
       const position = positions[Number(tile.id.slice(5)) % positions.length];
       button.style.left = position[0] + '%';
       button.style.top = position[1] + '%';
       button.style.setProperty('--tile-tilt', (Number(tile.id.slice(5)) % 2 ? '5deg' : '-4deg'));
-      button.setAttribute('aria-label', '字母 ' + tile.letter);
+      button.setAttribute('aria-label', 'QTE 字元 ' + tile.letter);
       grid.append(button);
     });
   }
@@ -1667,7 +1703,7 @@ export function createUI(onAction) {
     qteLayer.innerHTML =
       '<div class="qte-card">' +
         '<div class="qte-banner">' +
-          '<div class="qte-topline"><span class="qte-alert">QTE</span><span class="qte-clock" id="qte-clock">6.0s</span></div>' +
+          '<div class="qte-topline"><span class="qte-alert">QTE</span><span class="qte-clock" id="qte-clock">' + (qte.remainingMs / 1000).toFixed(1) + 's</span></div>' +
           '<div class="qte-timer-track"><span id="qte-timer-bar"></span></div>' +
         '</div>' +
         monsterPresenceMarkup(monster) +
@@ -1685,6 +1721,52 @@ export function createUI(onAction) {
     const grid = byId('letter-grid');
     lastQteMessage = '';
     appendQteTiles(grid, qte);
+  }
+
+  function buildQteItemUse(itemUse, state) {
+    const presentation = QTE_ITEM_PRESENTATIONS[itemUse.itemId] ?? {
+      id: 'generic', name: itemUse.word || '解法道具', visual: 'wordmark',
+      fallbackText: itemUse.word || 'ITEM', accent: 'blue'
+    };
+    const visual = presentation.visual === 'image' && presentation.assetPath
+      ? '<img class="qte-item-image" src="' + escapeHtml(presentation.assetPath) + '" data-fallback-text="' + escapeHtml(presentation.fallbackText ?? itemUse.word ?? 'ITEM') + '" alt="" draggable="false" />'
+      : '<span class="qte-item-wordmark" aria-hidden="true">' + escapeHtml(presentation.fallbackText ?? itemUse.word ?? 'ITEM') + '</span>';
+    const monster = state.activeMonster;
+    const monsterMarkup = monster
+      ? monsterPresenceMarkup(monster, 'is-settled') + monsterVitalsMarkup(monster, state.monsterHp, state.monsterMaxHp)
+      : '';
+    qteLayer.style.removeProperty('--monster-entrance-delay');
+    qteLayer.style.removeProperty('--monster-cast-delay');
+    qteLayer.style.setProperty('--qte-item-entrance-duration', GAME_CONFIG.qteItemEntranceDurationMs + 'ms');
+    qteLayer.style.setProperty('--qte-item-message-duration', GAME_CONFIG.qteItemMessageEntranceDurationMs + 'ms');
+    qteLayer.style.setProperty('--qte-item-fade-duration', GAME_CONFIG.qteItemFadeDurationMs + 'ms');
+    qteLayer.style.setProperty('--qte-item-transition-duration', GAME_CONFIG.qteItemWhiteTransitionDurationMs + 'ms');
+    qteLayer.innerHTML = '<div class="qte-card qte-item-card">' + monsterMarkup +
+      '<div class="qte-item-presentation' + (presentation.visual === 'image' ? ' is-image-item' : '') + '" data-item-id="' + escapeHtml(presentation.id ?? itemUse.itemId ?? 'generic') + '" data-accent="' + escapeHtml(presentation.accent ?? 'blue') + '">' +
+        '<div class="qte-item-art" role="img" aria-label="' + escapeHtml(presentation.name ?? itemUse.word ?? '解法道具') + '">' + visual +
+          '<span class="qte-item-flare" aria-hidden="true"></span>' +
+        '</div>' +
+        '<p class="qte-item-message">' + escapeHtml(itemUse.message) + '</p>' +
+      '</div>' +
+    '</div>';
+    const presentationElement = qteLayer.querySelector('.qte-item-presentation');
+    if (presentationElement && presentation.visual === 'image') {
+      presentationElement.style.setProperty('--item-image-scale', String(presentation.visualScale ?? 1));
+    }
+    const productImage = qteLayer.querySelector('.qte-item-image');
+    if (productImage) {
+      const showFallback = () => {
+        const fallback = document.createElement('span');
+        fallback.className = 'qte-item-wordmark';
+        fallback.setAttribute('aria-hidden', 'true');
+        fallback.textContent = productImage.dataset.fallbackText || itemUse.word || 'ITEM';
+        productImage.replaceWith(fallback);
+      };
+      productImage.addEventListener('error', showFallback, { once: true });
+      if (productImage.complete && productImage.naturalWidth === 0) showFallback();
+    }
+    lastQteMessage = '';
+    lastQteObject = null;
   }
 
   function updateQte(qte) {
@@ -1710,12 +1792,31 @@ export function createUI(onAction) {
       if (!button) return;
       button.classList.toggle('is-used', !tile.visible);
       button.disabled = !tile.visible;
-      button.setAttribute('aria-label', tile.visible ? '字母 ' + tile.letter : '字母 ' + tile.letter + ' 已選');
+      button.setAttribute('aria-label', tile.visible ? 'QTE 字元 ' + tile.letter : 'QTE 字元 ' + tile.letter + ' 已選');
     });
   }
 
   function updateRhythmTrack(state, game) {
     const activeMode = state.mode === 'PAUSED' ? state.resumeMode : state.mode;
+    const mobileWobble = globalThis.matchMedia?.('(max-width: 600px)')?.matches ?? false;
+    const reducedMotion = globalThis.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches ?? false;
+    const heartProfile = [mobileWobble, reducedMotion, state.antiDizzinessMode].join(':');
+    if (heartProfile !== lastHeartWobbleProfile) {
+      lastHeartWobbleProfile = heartProfile;
+      const scale = (mobileWobble ? GAME_CONFIG.heartPalpitationsMobileAmplitudeScale : 1) *
+        (state.antiDizzinessMode === ANTI_DIZZINESS_MODE.ON ? GAME_CONFIG.heartPalpitationsReducedAmplitudeScale : 1) *
+        (reducedMotion ? GAME_CONFIG.heartPalpitationsReducedAmplitudeScale : 1);
+      const x = GAME_CONFIG.heartPalpitationsWobbleXAmplitudePx * scale;
+      const y = GAME_CONFIG.heartPalpitationsWobbleYAmplitudePx * scale;
+      trackShake.style.setProperty('--heart-wobble-x', x + 'px');
+      trackShake.style.setProperty('--heart-wobble-y', y + 'px');
+      trackShake.style.setProperty('--heart-wobble-mid-x', x * .55 + 'px');
+      trackShake.style.setProperty('--heart-wobble-mid-y', y * .5 + 'px');
+      trackShake.style.setProperty('--heart-wobble-small-x', x * .28 + 'px');
+      trackShake.style.setProperty('--heart-wobble-small-y', y * .22 + 'px');
+      trackShake.style.setProperty('--heart-wobble-tiny-x', x * .2 + 'px');
+      trackShake.style.setProperty('--heart-wobble-tiny-y', y * .2 + 'px');
+    }
     const round = state.rhythmRound;
     const rapidTap = activeMode === 'COMBAT_RAPID_TAP' ? state.combatRapidTap : null;
     const windows = game.getRhythmHitWindows();
@@ -1741,21 +1842,24 @@ export function createUI(onAction) {
 
     if (rapidTap?.disabled) {
       rhythmLabel.textContent = '連打已停用';
-      rhythmLabel.classList.remove('is-rapid-tap-counter', 'is-tap-pop');
+      rhythmLabel.classList.remove('is-rapid-tap-counter', 'is-tap-pop', 'is-low-blood-sugar-disabled');
       rhythmLabel.classList.add('is-rapid-tap-disabled');
     } else if (rapidTap) {
       rhythmLabel.textContent = '連打 ×' + rapidTap.tapCount;
-      rhythmLabel.classList.remove('is-rapid-tap-disabled', 'is-tap-pop');
+      rhythmLabel.classList.remove('is-rapid-tap-disabled', 'is-tap-pop', 'is-low-blood-sugar-disabled');
       rhythmLabel.classList.add('is-rapid-tap-counter');
     } else if (round) {
-      rhythmLabel.classList.remove('is-rapid-tap-counter', 'is-rapid-tap-disabled', 'is-tap-pop');
-      rhythmLabel.textContent = round.inputLocked
+      rhythmLabel.classList.remove('is-rapid-tap-counter', 'is-rapid-tap-disabled', 'is-low-blood-sugar-disabled', 'is-tap-pop');
+      rhythmLabel.textContent = round.isLowBloodSugarDisabled
+        ? '低血糖｜暫時無法操作'
+        : round.inputLocked
         ? '按鍵額度已用完'
         : (activeMode === 'COMBAT_ATTACK' ? '攻擊回合 · ' : '') +
           round.label + ' · ' + round.successCount + '/' + round.hitBeats.length;
       if (round.inputLocked) rhythmLabel.classList.add('is-rapid-tap-disabled');
+      if (round.isLowBloodSugarDisabled) rhythmLabel.classList.add('is-low-blood-sugar-disabled');
     } else {
-      rhythmLabel.classList.remove('is-rapid-tap-counter', 'is-rapid-tap-disabled', 'is-tap-pop');
+      rhythmLabel.classList.remove('is-rapid-tap-counter', 'is-rapid-tap-disabled', 'is-low-blood-sugar-disabled', 'is-tap-pop');
       const rhythmModeLabels = {
         COMBAT_ATTACK_INTRO: '準備攻擊',
         COMBAT_RAPID_TAP: '連打輸出',
@@ -1802,7 +1906,27 @@ export function createUI(onAction) {
     ballVisual.classList.toggle('is-rapid-tap-ball', rapidTapActive);
     track.classList.toggle('is-rapid-tap', rapidTapActive);
     track.classList.toggle('is-rapid-tap-disabled', Boolean(rapidTap?.disabled));
+    track.classList.toggle('is-low-blood-sugar-disabled', Boolean(round?.isLowBloodSugarDisabled));
+    track.dataset.lowBloodSugarDisabled = round?.isLowBloodSugarDisabled ? 'true' : '';
     const isRoundResolved = round?.phase === RHYTHM_PHASE.RESOLVED || round?.phase === RHYTHM_PHASE.FINISHED;
+    const blackSpotsSeverity = Math.max(0, Math.min(3, Number(state.debuffs?.BLACK_SPOTS?.severity) || 0));
+    track.dataset.blackSpots = blackSpotsSeverity ? String(blackSpotsSeverity) : '';
+    const heartbeatTrackMode = ['CLIMBING', 'COMBAT_ATTACK', 'COMBAT_RAPID_TAP'].includes(activeMode);
+    const shouldWobble = Boolean(
+      heartbeatTrackMode &&
+      state.debuffs?.HEART_PALPITATIONS &&
+      state.heartPalpitationsWobbleRemainingMs > 0
+    );
+    if (shouldWobble && state.heartPalpitationsWobbleSerial !== lastHeartWobbleSerial) {
+      lastHeartWobbleSerial = state.heartPalpitationsWobbleSerial;
+      trackShake.classList.remove('is-heartbeat-wobble');
+      void trackShake.offsetWidth;
+      trackShake.classList.add('is-heartbeat-wobble');
+    } else if (!shouldWobble) {
+      trackShake.classList.remove('is-heartbeat-wobble');
+    }
+    trackShake.classList.toggle('is-game-paused', state.mode === 'PAUSED');
+    trackShake.classList.toggle('is-anti-dizziness', state.antiDizzinessMode === ANTI_DIZZINESS_MODE.ON);
     track.classList.toggle('is-input-locked', Boolean(round?.inputLocked));
     track.classList.toggle('is-resolved', isRoundResolved || Boolean(round?.inputLocked));
     if (round?.inputLocked) track.classList.remove('is-rhythm-hit', 'is-rhythm-miss', 'is-feedback-active');
@@ -1906,12 +2030,13 @@ export function createUI(onAction) {
     const isDebuffToAnswerDelay = activeMode === 'DEBUFF_TO_ANSWER_DELAY';
     const isAnswerPreview = activeMode === 'ANSWER_PREVIEW';
     const isMonsterQte = activeMode === 'MONSTER_QTE' && Boolean(state.activeQte);
+    const isQteItemUse = Boolean(state.qteItemUse) && activeMode.startsWith('QTE_ITEM_');
     const isQteFailureNotice = activeMode === 'QTE_FAILURE_KNOCKBACK';
     const isCombat = activeMode.startsWith('COMBAT_') && Boolean(state.activeMonster);
     const isCombatDefense = activeMode === 'COMBAT_DEFENSE' && Boolean(state.combatDefenseRound);
     const isMonsterPresentation = isMonsterEntrance || isMonsterCast || isMonsterImpact || isAttackToDebuffDelay ||
       isDebuffReveal || isDebuffToAnswerDelay || isAnswerPreview;
-    const isMonsterEventSequence = isEventWarning || isMonsterPresentation || isMonsterQte || isCombat;
+    const isMonsterEventSequence = isEventWarning || isMonsterPresentation || isMonsterQte || isQteItemUse || isCombat;
     const warningOpacity = isEventWarning ? eventWarningOpacity(state) : 0;
     gameRoot.classList.toggle('is-event-warning', isEventWarning);
     gameRoot.classList.toggle('is-game-paused', state.mode === 'PAUSED');
@@ -1925,6 +2050,12 @@ export function createUI(onAction) {
     qteLayer.classList.toggle('is-debuff-delay', isDebuffToAnswerDelay);
     qteLayer.classList.toggle('is-answer-preview', isAnswerPreview);
     qteLayer.classList.toggle('is-active', isMonsterQte);
+    qteLayer.classList.toggle('is-qte-item-use', isQteItemUse);
+    qteLayer.classList.toggle('is-item-reveal', activeMode === 'QTE_ITEM_REVEAL');
+    qteLayer.classList.toggle('is-item-message', activeMode === 'QTE_ITEM_MESSAGE');
+    qteLayer.classList.toggle('is-item-hold', activeMode === 'QTE_ITEM_HOLD');
+    qteLayer.classList.toggle('is-item-fade', activeMode === 'QTE_ITEM_FADE');
+    qteLayer.classList.toggle('is-item-transition', activeMode === 'QTE_ITEM_TRANSITION');
     qteLayer.classList.toggle('is-defense-recovery-qte', isMonsterQte && state.activeQte?.context === QTE_CONTEXT.DEFENSE_RECOVERY);
     qteLayer.classList.toggle('is-combat', isCombat);
     qteLayer.classList.toggle('is-combat-attack-intro', activeMode === 'COMBAT_ATTACK_INTRO');
@@ -2005,24 +2136,34 @@ export function createUI(onAction) {
     const cameraBob = isAutoClimbing ? Math.sin(state.stepPhase * Math.PI * 2) * 1.2 : 0;
     arena.style.setProperty('--camera-bob', cameraBob.toFixed(2) + 'px');
     const effectiveClimbSpeed = game.getEffectiveClimbSpeed();
-    const stepCycleDuration = Math.max(0.18, GAME_CONFIG.stepCycleDistanceFloors / (2 * Math.max(effectiveClimbSpeed, GAME_CONFIG.minClimbSpeed)));
+    const stepCycleDuration = Math.max(0.18, GAME_CONFIG.stepCycleDistanceFloors / (2 * Math.max(effectiveClimbSpeed, 0.001)));
     const stepCycleDurationValue = stepCycleDuration.toFixed(2) + 's';
     if (arena.style.getPropertyValue('--step-cycle-duration') !== stepCycleDurationValue) {
       arena.style.setProperty('--step-cycle-duration', stepCycleDurationValue);
     }
     arena.classList.toggle('is-running', isAutoClimbing);
-    const progressLabel = formatStairProgress(state.progress);
-    const viewNodeLabel = formatStairProgress(state.stairNodeProgress);
-    const nextNodeLabel = formatStairProgress(state.stairNodeProgress + 0.5);
-    sceneSignAFloor.textContent = formatStairProgress(viewNodeProgress(state, STAIR_VIEW_MODE.POINT_ZERO)) + 'F';
-    sceneSignBFloor.textContent = formatStairProgress(viewNodeProgress(state, STAIR_VIEW_MODE.POINT_FIVE)) + 'F';
-    sceneFloor.textContent = progressLabel + 'F';
-    sceneViewLabel.textContent = isAutoClimbing
-      ? '正在上樓'
-      : state.isLandingPaused ? '已到平台，站穩中' : state.isTurning ? '平台轉身中' : viewNodeLabel + 'F 視角';
-    sceneTarget.textContent = isAutoClimbing
-      ? '向上推進'
-      : state.isLandingPaused ? '準備轉向下一段' : state.isTurning ? '轉向下一段樓梯' : '上行至 ' + nextNodeLabel + 'F';
+    updateWallFloorSigns(state);
+    const currentFloor = Math.max(GAME_CONFIG.startFloor, Math.min(GAME_CONFIG.maxFloor, Number(state.progress) || GAME_CONFIG.startFloor));
+    const floorProgressRatio = Math.max(0, Math.min(1, (currentFloor - GAME_CONFIG.startFloor) / (GAME_CONFIG.maxFloor - GAME_CONFIG.startFloor)));
+    const floorProgressPercent = (floorProgressRatio * 100).toFixed(3) + '%';
+    const floorProgressScale = floorProgressRatio.toFixed(5);
+    const displayedFloor = Math.floor(currentFloor);
+    const floorProgressLabel = displayedFloor + 'F';
+    if (floorProgress.style.getPropertyValue('--floor-progress') !== floorProgressPercent) {
+      floorProgress.style.setProperty('--floor-progress', floorProgressPercent);
+    }
+    if (floorProgress.style.getPropertyValue('--floor-progress-scale') !== floorProgressScale) {
+      floorProgress.style.setProperty('--floor-progress-scale', floorProgressScale);
+    }
+    floorProgressCurrent.textContent = floorProgressLabel;
+    for (const milestone of floorProgressMilestones) {
+      milestone.classList.toggle('is-reached', currentFloor + 1e-8 >= Number(milestone.dataset.floor));
+    }
+    floorProgress.classList.toggle('is-complete', floorProgressRatio >= 1);
+    if (floorProgress.getAttribute('aria-valuenow') !== currentFloor.toFixed(2)) {
+      floorProgress.setAttribute('aria-valuenow', currentFloor.toFixed(2));
+      floorProgress.setAttribute('aria-valuetext', floorProgressLabel);
+    }
     timerValue.textContent = formatTime(state.timerMs);
     speedNumber.textContent = effectiveClimbSpeed.toFixed(3);
 
@@ -2053,7 +2194,7 @@ export function createUI(onAction) {
     updateRhythmOrb(state, sceneProgress);
     track.classList.toggle('is-blurred', Boolean(state.debuffs?.BLUR));
     arena.classList.toggle('is-danger', state.feedback?.kind === 'danger');
-    arena.classList.toggle('is-qte', isEventWarning || isMonsterPresentation || isMonsterQte || isCombat);
+    arena.classList.toggle('is-qte', isEventWarning || isMonsterPresentation || isMonsterQte || isQteItemUse || isCombat);
     const shakeStartMs = Math.max(0,
       GAME_CONFIG.monsterEntranceDurationMs - GAME_CONFIG.monsterEntranceShakeDurationMs);
     arena.classList.toggle('is-monster-entrance-impact',
@@ -2066,9 +2207,7 @@ export function createUI(onAction) {
     byId('qte-knockback-distance').textContent = '-' + GAME_CONFIG.monsterQteFailureKnockbackFloors + 'F';
     arena.classList.toggle('is-event-paused', state.mode === 'PAUSED' && isMonsterEventSequence);
     gameRoot.classList.toggle('is-event-paused', state.mode === 'PAUSED' && isMonsterEventSequence);
-    arena.classList.toggle('debuff-sore', Boolean(state.debuffs?.SORE));
     arena.classList.toggle('debuff-blur', Boolean(state.debuffs?.BLUR));
-    arena.classList.toggle('debuff-fatigue', Boolean(state.debuffs?.FATIGUE));
     pauseButton.disabled = state.mode === 'MENU' || state.mode === 'RESULT';
     pauseButton.textContent = state.mode === 'PAUSED' ? '▶' : 'Ⅱ';
     pauseButton.setAttribute('aria-label', state.mode === 'PAUSED' ? UI_TEXT.resumeButton : UI_TEXT.pauseAria);
@@ -2181,7 +2320,19 @@ export function createUI(onAction) {
 
     climber.classList.toggle('is-falling', state.feedback?.kind === 'danger');
 
-    if (isMonsterPresentation && state.activeMonster) {
+    if (isQteItemUse) {
+      qteLayer.hidden = false;
+      if (lastQteItemUse !== state.qteItemUse) {
+        buildQteItemUse(state.qteItemUse, state);
+        lastQteItemUse = state.qteItemUse;
+      }
+      const message = qteLayer.querySelector('.qte-item-message');
+      const showMessage = ['QTE_ITEM_MESSAGE', 'QTE_ITEM_HOLD', 'QTE_ITEM_FADE'].includes(activeMode);
+      message?.classList.toggle('is-visible', showMessage);
+      message?.classList.toggle('is-leaving', activeMode === 'QTE_ITEM_FADE');
+      qteLayer.querySelector('.qte-item-art')?.classList.toggle('is-leaving', activeMode === 'QTE_ITEM_FADE');
+      updateCombatVitals(state);
+    } else if (isMonsterPresentation && state.activeMonster) {
       let presence = qteLayer.querySelector('.monster-presence');
       if (!presence || (isMonsterEntrance && !presence.classList.contains('is-descending'))) {
         buildMonsterEntrance(state.activeMonster, state.eventPhaseElapsedMs, state.monsterHp, state.monsterMaxHp);
@@ -2213,6 +2364,7 @@ export function createUI(onAction) {
     } else {
       qteLayer.hidden = true;
       lastQteObject = null;
+      lastQteItemUse = null;
       lastCombatViewMode = null;
       lastCombatMonsterId = null;
     }

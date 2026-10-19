@@ -1,14 +1,15 @@
 import { GAME_CONFIG } from './config.js';
 import { applyDebuff } from './effects.js';
 
-export function applyHit(state) {
+export function applyHit(state, speedRewardMultiplier = 1) {
   state.combo += 1;
   state.stats.hits += 1;
   state.stats.maxCombo = Math.max(state.stats.maxCombo, state.combo);
   const maxClimbSpeed = Number.isFinite(state.maxClimbSpeed)
     ? state.maxClimbSpeed
     : GAME_CONFIG.maxClimbSpeed;
-  state.climbSpeed = Math.min(maxClimbSpeed, state.climbSpeed + GAME_CONFIG.hitSpeedBonus);
+  const rewardMultiplier = Math.max(0, Number(speedRewardMultiplier) || 0);
+  state.climbSpeed = Math.min(maxClimbSpeed, state.climbSpeed + GAME_CONFIG.hitSpeedBonus * rewardMultiplier);
   return { climbSpeed: state.climbSpeed };
 }
 

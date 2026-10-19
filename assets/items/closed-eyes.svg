@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" role="img" aria-label="閉合的雙眼">
+  <defs>
+    <linearGradient id="skin" x1="0" y1="0" x2="0.85" y2="1">
+      <stop offset="0" stop-color="#fff0df"/>
+      <stop offset="1" stop-color="#f4c7a7"/>
+    </linearGradient>
+    <linearGradient id="lid" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#d87762"/>
+      <stop offset="1" stop-color="#9e4f50"/>
+    </linearGradient>
+  </defs>
+  <path d="M18 57c5-21 24-34 42-34s37 13 42 34c-5 24-23 41-42 41S23 81 18 57Z" fill="url(#skin)" stroke="#d99579" stroke-width="3"/>
+  <path d="M28 53c9 13 20 19 32 19s23-6 32-19" fill="none" stroke="url(#lid)" stroke-linecap="round" stroke-width="7"/>
+  <path d="m29 52-7-8m18 17-3 10m51-19 7-8M83 61l3 10" fill="none" stroke="#914958" stroke-linecap="round" stroke-width="4"/>
+  <path d="M39 83c7 5 14 7 21 7s14-2 21-7" fill="none" stroke="#e2a382" stroke-linecap="round" stroke-width="3"/>
+</svg>

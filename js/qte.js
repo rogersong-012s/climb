@@ -18,7 +18,7 @@ function shuffle(items, random = Math.random) {
 export function createQte(
   monster,
   random = Math.random,
-  durationMs = monster.qteDurationMs ?? GAME_CONFIG.monsterQteDurationMs,
+  durationMs = GAME_CONFIG.monsterQteDurationMs,
   { context = QTE_CONTEXT.ENCOUNTER, solutions = monster.solutions } = {}
 ) {
   const qteSolutions = Array.isArray(solutions) ? solutions : monster.solutions;

@@ -47,11 +47,12 @@
           <path fill="#fff" fill-opacity=".62" d="M296 125h46v34h-46z"/>
           <path fill="#fffdf3" stroke="#c0c9c5" stroke-width="4" d="M306 30h88l11 10-11 10h-88l-11-10z"/>
           <path fill="#ffe8ae" d="M315 37h70v6h-70z"/>
-          <g class="wall-floor-sign" aria-hidden="true">
-            <rect x="482" y="225" width="106" height="59" rx="3" fill="#fffdf7" stroke="#78878a" stroke-width="3"/>
-            <path d="M482 225h7v59h-7z" fill="#e9a64d"/>
-            <text id="scene-sign-a-floor" x="499" y="261" fill="#3d5055" font-family="Arial, sans-serif" font-size="25" font-weight="800">1.0F</text>
-            <text x="499" y="275" fill="#758285" font-family="Arial, sans-serif" font-size="8" font-weight="700" letter-spacing="1.2">STAIR · UP</text>
+          <g class="wall-floor-sign" transform="translate(0,-94.5)" aria-hidden="true">
+            <rect class="wall-floor-sign-panel" x="482" y="225" width="106" height="59" rx="3" fill="#edf3fa" stroke="#314a61" stroke-width="2.5"/>
+            <path class="wall-floor-sign-accent" d="M482 225h7v59h-7z" fill="#ff963f"/>
+            <text id="scene-sign-a-up" class="wall-floor-sign-direction wall-floor-sign-up" x="538" y="249" text-anchor="middle" fill="#2468d9" font-family="Inter, Arial, sans-serif" font-size="17" font-weight="760">↑ 2F</text>
+            <path class="wall-floor-sign-divider" d="M494 255h88" stroke="#c8d8e8" stroke-width="1.5"/>
+            <text id="scene-sign-a-down" class="wall-floor-sign-direction wall-floor-sign-down" x="538" y="277" text-anchor="middle" fill="#dc7837" font-family="Inter, Arial, sans-serif" font-size="17" font-weight="760">↓ 1F</text>
           </g>
           <path fill="#e9e6de" d="M0 610h700v390H0z"/>
           <path fill="#aaa69d" d="M0 287H700V297H0Z"/>
@@ -112,11 +113,11 @@
           <circle cx="385" cy="200" r="4" fill="#9a8a6b"/>
           <path fill="#fffdf3" stroke="#c0c9c5" stroke-width="4" d="M306 30h88l11 10-11 10h-88l-11-10z"/>
           <path fill="#ffe8ae" d="M315 37h70v6h-70z"/>
-          <g class="wall-floor-sign" aria-hidden="true">
-            <rect x="482" y="225" width="106" height="59" rx="3" fill="#fffdf7" stroke="#78878a" stroke-width="3"/>
-            <path d="M482 225h7v59h-7z" fill="#e9a64d"/>
-            <text id="scene-sign-b-floor" x="499" y="261" fill="#3d5055" font-family="Arial, sans-serif" font-size="25" font-weight="800">1.5F</text>
-            <text x="499" y="275" fill="#758285" font-family="Arial, sans-serif" font-size="8" font-weight="700" letter-spacing="1.2">STAIR · UP</text>
+          <g class="wall-floor-sign" transform="translate(0,-94.5)" aria-hidden="true">
+            <rect class="wall-floor-sign-panel" x="482" y="225" width="106" height="59" rx="3" fill="#edf3fa" stroke="#314a61" stroke-width="2.5"/>
+            <path class="wall-floor-sign-accent" d="M482 225h7v59h-7z" fill="#ff963f"/>
+            <text class="wall-floor-sign-heading" x="538" y="243" text-anchor="middle" fill="#536e87" font-family="Inter, Arial, sans-serif" font-size="16" font-weight="760" letter-spacing="1.5">THIS</text>
+            <text id="scene-sign-b-floor" class="wall-floor-sign-floor" x="538" y="274" text-anchor="middle" fill="#20364c" font-family="Inter, Arial, sans-serif" font-size="27" font-weight="800">2F</text>
           </g>
           <path fill="#e9e6de" d="M0 610h700v390H0z"/>
           <path fill="#aaa69d" d="M0 287H700V297H0Z"/>
@@ -251,9 +252,24 @@
         <canvas class="turn-scene" id="turn-scene" aria-hidden="true"></canvas>
         <div class="scene-motion-lines" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
 
-        <div class="scene-hud" aria-label="場景資訊">
-          <div class="floor-marker"><span id="scene-view-label">1.0F 視角</span><strong id="scene-floor">1.0F</strong><small id="scene-target">上行至 1.5F</small></div>
-          <div class="combo-stamp" id="combo-stamp" aria-hidden="true"><span>連段</span><strong id="combo-stamp-value">0</strong></div>
+        <div class="combo-stamp" id="combo-stamp" aria-hidden="true"><span>連段</span><strong id="combo-stamp-value">0</strong></div>
+        <div class="floor-progress" id="floor-progress" role="progressbar" aria-label="登樓進度" aria-valuemin="1" aria-valuemax="101" aria-valuenow="1" aria-valuetext="1F">
+          <span class="floor-progress-end floor-progress-top">101F</span>
+          <div class="floor-progress-track" aria-hidden="true">
+            <span class="floor-progress-fill" id="floor-progress-fill"></span>
+            <span class="floor-progress-milestone" data-floor="11" style="--milestone-progress:10%"></span>
+            <span class="floor-progress-milestone" data-floor="21" style="--milestone-progress:20%"></span>
+            <span class="floor-progress-milestone" data-floor="31" style="--milestone-progress:30%"></span>
+            <span class="floor-progress-milestone" data-floor="41" style="--milestone-progress:40%"></span>
+            <span class="floor-progress-milestone" data-floor="51" style="--milestone-progress:50%"></span>
+            <span class="floor-progress-milestone" data-floor="61" style="--milestone-progress:60%"></span>
+            <span class="floor-progress-milestone" data-floor="71" style="--milestone-progress:70%"></span>
+            <span class="floor-progress-milestone" data-floor="81" style="--milestone-progress:80%"></span>
+            <span class="floor-progress-milestone" data-floor="91" style="--milestone-progress:90%"></span>
+            <span class="floor-progress-marker" id="floor-progress-marker"></span>
+            <span class="floor-progress-current" id="floor-progress-current">1F</span>
+          </div>
+          <span class="floor-progress-end floor-progress-bottom">1F</span>
         </div>
         <div class="debuff-card debuff-list" id="debuff-card" aria-label="目前負面狀態" aria-live="polite" hidden></div>
         <div class="climber" id="climber" aria-hidden="true"><span class="shoe shoe-left"></span><span class="shoe shoe-right"></span></div>
@@ -275,10 +291,18 @@
 
       <section class="rhythm-panel" aria-label="節奏操作區">
         <div class="rhythm-header"><span class="operation-label" id="rhythm-label">節奏球</span><div class="feedback-pill" id="feedback" aria-live="polite">準備好了嗎？</div></div>
-        <div class="rhythm-track" id="rhythm-track" aria-label="節奏判定軌道">
-          <div class="track-zones" id="track-zones" aria-hidden="true"></div>
-          <div class="rhythm-ball-position" id="rhythm-ball" aria-hidden="true">
-            <div class="rhythm-ball-visual" id="rhythm-ball-visual"><span></span></div>
+        <div class="rhythm-track-viewport">
+          <div class="rhythm-track-shake" id="rhythm-track-shake">
+            <div class="rhythm-track" id="rhythm-track" aria-label="節奏判定軌道">
+              <div class="track-zones" id="track-zones" aria-hidden="true"></div>
+              <div class="rhythm-dark-spots" aria-hidden="true">
+                <span></span><span></span><span></span><span></span>
+                <span></span><span></span><span></span><span></span>
+              </div>
+              <div class="rhythm-ball-position" id="rhythm-ball" aria-hidden="true">
+                <div class="rhythm-ball-visual" id="rhythm-ball-visual"><span></span></div>
+              </div>
+            </div>
           </div>
         </div>
         <div class="rhythm-footer">

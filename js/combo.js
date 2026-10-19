@@ -7,8 +7,5 @@ export function hitZoneWidthForCombo(combo, debuffType = null, judgmentMultiplie
   );
   const upgradeBonus = GAME_CONFIG.initialHitZoneWidth * Math.max(0, judgmentMultiplier - 1);
   const comboWidth = baseWidth + upgradeBonus;
-  if (debuffType === 'FATIGUE') {
-    return Math.max(GAME_CONFIG.fatigueMinHitZoneWidth, comboWidth - GAME_CONFIG.fatigueHitZonePenalty);
-  }
   return comboWidth;
 }

@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 180" role="img" aria-label="面具">
+  <defs>
+    <linearGradient id="mask" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#fff1d8"/>
+      <stop offset="1" stop-color="#e8b778"/>
+    </linearGradient>
+  </defs>
+  <path d="M25 47c19-18 43-27 65-27s46 9 65 27l-7 77c-2 18-17 32-36 35l-22 4-22-4c-19-3-34-17-36-35z" fill="url(#mask)" stroke="#9a653e" stroke-width="7" stroke-linejoin="round"/>
+  <path d="M35 73c17-12 34-14 50-6l-4 22c-17-9-32-8-48 3zm110 0c-17-12-34-14-50-6l4 22c17-9 32-8 48 3z" fill="#315a78" stroke="#fff7e9" stroke-width="4" stroke-linejoin="round"/>
+  <path d="M48 121c14-10 28-11 42-5m42 5c-14-10-28-11-42-5" fill="none" stroke="#c77945" stroke-width="7" stroke-linecap="round"/>
+  <path d="M17 83 3 76m160 7 14-7M39 147l-12 13m114-13 12 13" fill="none" stroke="#9a653e" stroke-width="6" stroke-linecap="round"/>
+</svg>
