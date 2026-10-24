@@ -725,6 +725,39 @@ export function createRhythmAudio({ config = RHYTHM_AUDIO_CONFIG, audioContextFa
     transportBeatDurationMs = currentBeatMs;
   }
 
+  function getBgmClock(state = latestState, gameTimerMs = state?.timerMs) {
+    const beatDurationMs = Math.max(1, transportBeatDurationMs);
+    let beatPosition = bgmBeatPosition;
+    let source = 'game-timer';
+
+    // Reward selection freezes game time while BGM continues on AudioContext.
+    // Include the time since the latest render sync so callers can schedule
+    // from the current musical phase, even between animation frames.
+    if (lastBgmMode === 'UPGRADE_SELECT') {
+      source = context?.state === 'running' ? 'audio-context' : 'held-audio-context';
+      if (context?.state === 'running' && Number.isFinite(lastBgmAudioTime)) {
+        beatPosition += Math.max(0, context.currentTime - lastBgmAudioTime) * 1000 / beatDurationMs;
+      }
+    } else if (Number.isFinite(gameTimerMs)) {
+      if (Number.isFinite(lastBgmTimerMs)) {
+        beatPosition += (gameTimerMs - lastBgmTimerMs) / beatDurationMs;
+      } else {
+        beatPosition += Math.max(0, gameTimerMs) / beatDurationMs;
+      }
+    }
+
+    const loopBeatPosition = ((beatPosition % loopBeats) + loopBeats) % loopBeats;
+    return {
+      beatPosition: Math.max(0, beatPosition),
+      beatDurationMs,
+      bpm: 60000 / beatDurationMs,
+      loopBeats,
+      loopBeatPosition,
+      source,
+      audioContextState: context?.state ?? 'not-created'
+    };
+  }
+
   function scheduleBgm(state) {
     if (!context || context.state !== 'running' || !bgmBus) return;
     if (!bgmStarted) {
@@ -797,8 +830,10 @@ export function createRhythmAudio({ config = RHYTHM_AUDIO_CONFIG, audioContextFa
       timeline = buildRhythmCueTimeline(round);
       nextNoteIndex = firstUnplayedNoteIndex(elapsedMs);
       originAudioTime = context?.state === 'running' ? context.currentTime - elapsedMs / 1000 : null;
-      rhythmOriginBgmBeatPosition = bgmBeatPosition - elapsedMs /
-        Math.max(1, Number(round.beatDurationMs) || transportBeatDurationMs);
+      rhythmOriginBgmBeatPosition = Number.isFinite(Number(round.bgmSpawnAlignment?.targetBeat))
+        ? Number(round.bgmSpawnAlignment.targetBeat)
+        : bgmBeatPosition - elapsedMs /
+          Math.max(1, Number(round.beatDurationMs) || transportBeatDurationMs);
       rhythmNeedsReanchor = originAudioTime === null;
     } else if (rhythmNeedsReanchor && context?.state === 'running') {
       originAudioTime = context.currentTime - elapsedMs / 1000;
@@ -839,8 +874,8 @@ export function createRhythmAudio({ config = RHYTHM_AUDIO_CONFIG, audioContextFa
   function sync(state = latestState) {
     if (!state) return;
     latestState = state;
-    if (!config.enabled || unavailable) return;
     updateBgmTransport(state);
+    if (!config.enabled || unavailable) return;
 
     if (state.mode === 'PAUSED') {
       if (!wasPaused) cancelForPause();
@@ -1037,6 +1072,8 @@ export function createRhythmAudio({ config = RHYTHM_AUDIO_CONFIG, audioContextFa
         held: bgmHeld,
         terminal: bgmTerminal
       },
+      bgmClock: getBgmClock(latestState),
+      rhythmSpawn: round?.bgmSpawnAlignment ?? latestState?.rhythmSpawnPending ?? null,
       hits
     };
   }
@@ -1050,7 +1087,7 @@ export function createRhythmAudio({ config = RHYTHM_AUDIO_CONFIG, audioContextFa
   }
 
   return Object.freeze({
-    sync, unlock, interrupt, recover, reset, getDiagnostics, playInputFeedback,
+    sync, unlock, interrupt, recover, reset, getDiagnostics, getBgmClock, playInputFeedback,
     setVolumeSettings, getVolumeSettings
   });
 }

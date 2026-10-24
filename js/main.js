@@ -5,8 +5,11 @@ import { createDebugController } from './debug.js';
 import { createRhythmAudio } from './audio.js';
 
 const debug = createDebugController();
-const game = createGame({ debugHooks: debug.enabled ? debug.hooks : null });
 const rhythmAudio = createRhythmAudio();
+const game = createGame({
+  debugHooks: debug.enabled ? debug.hooks : null,
+  getBgmClock: rhythmAudio.getBgmClock
+});
 let lastRhythmFeedbackSerial = null;
 let lastRapidTapRound = null;
 let lastRapidTapCount = 0;

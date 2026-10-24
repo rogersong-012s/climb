@@ -74,6 +74,7 @@ function freshState(bestTimeMs = null, antiDizzinessMode = ANTI_DIZZINESS_MODE.O
     turnTargetSegmentIndex: null,
     combo: 0,
     rhythmRound: null,
+    rhythmSpawnPending: null,
     rhythmRoundSerial: 0,
     lowBloodSugarRhythmBallCount: 0,
     unlockedRhythmTypes: ['RED', 'BLUE'],
@@ -184,6 +185,7 @@ function readAntiDizzinessMode(storage) {
 export function createGame(options = {}) {
   const random = options.random ?? Math.random;
   const debugHooks = options.debugHooks ?? null;
+  const getBgmClock = typeof options.getBgmClock === 'function' ? options.getBgmClock : null;
   let storage = options.storage;
   if (storage === undefined) {
     try { storage = globalThis.localStorage; } catch { storage = null; }
@@ -365,11 +367,89 @@ export function createGame(options = {}) {
     return rhythmBeatDurationForCurrentDebuff() * GAME_CONFIG.rhythmPrepareBeats;
   }
 
+  function bgmClockAt(gameTimerMs = state.timerMs) {
+    if (getBgmClock) {
+      try {
+        const clock = getBgmClock(state, gameTimerMs);
+        if (Number.isFinite(clock?.beatPosition) && Number.isFinite(clock?.beatDurationMs) && clock.beatDurationMs > 0) {
+          return clock;
+        }
+      } catch { /* Fall back to game time if the optional audio clock is unavailable. */ }
+    }
+
+    const beatDurationMs = Number(state.rhythmRound?.beatDurationMs) || rhythmBeatDurationForCurrentDebuff();
+    return {
+      beatPosition: Math.max(0, Number(gameTimerMs) || 0) / beatDurationMs,
+      beatDurationMs,
+      source: 'game-time-fallback'
+    };
+  }
+
+  function queueRhythmRoundAtBgmBeat(delayBeats, gameTimerMs, reason) {
+    const clock = bgmClockAt(gameTimerMs);
+    const beatPosition = Math.max(0, Number(clock.beatPosition) || 0);
+    const beatDurationMs = Math.max(1, Number(clock.beatDurationMs) || rhythmBeatDurationForCurrentDebuff());
+    const toleranceBeats = Math.max(0, Number(GAME_CONFIG.rhythmBgmBeatSnapToleranceMs) || 0) / beatDurationMs;
+    const nearestIntegerBeat = Math.round(beatPosition);
+    const alignedBeat = Math.abs(beatPosition - nearestIntegerBeat) <= toleranceBeats
+      ? nearestIntegerBeat
+      : Math.ceil(beatPosition - 1e-10);
+    const safeDelayBeats = Math.max(0, Number(delayBeats) || 0);
+    const pending = {
+      reason,
+      source: clock.source ?? 'bgm-transport',
+      scheduledAtGameTimerMs: gameTimerMs,
+      scheduledAtBeat: beatPosition,
+      alignedBeat,
+      targetBeat: alignedBeat + safeDelayBeats,
+      delayBeats: safeDelayBeats,
+      remainingMs: Math.max(0, (alignedBeat + safeDelayBeats - beatPosition) * beatDurationMs)
+    };
+    state.rhythmSpawnPending = pending;
+    if (state.rhythmRound?.phase === RHYTHM_PHASE.FINISHED) {
+      state.rhythmRound.respawnRemainingMs = pending.remainingMs;
+      state.rhythmRound.respawnTargetBgmBeat = pending.targetBeat;
+    }
+    notifyDebug('onRhythmSpawnScheduled', {
+      ...pending,
+      floor: state.progress,
+      mode: state.mode
+    });
+    return pending;
+  }
+
+  function spawnScheduledRhythmRound(gameTimerMs) {
+    const pending = state.rhythmSpawnPending;
+    if (!pending) return false;
+    const clock = bgmClockAt(gameTimerMs);
+    const actualBeatPosition = Number(clock.beatPosition);
+    const beatDurationMs = Math.max(1, Number(clock.beatDurationMs) || rhythmBeatDurationForCurrentDebuff());
+    const spawnAlignment = {
+      ...pending,
+      actualBeatPosition,
+      generationOffsetMs: Number.isFinite(actualBeatPosition)
+        ? (actualBeatPosition - pending.targetBeat) * beatDurationMs
+        : null,
+      actualSpawnGameTimerMs: gameTimerMs
+    };
+    state.rhythmSpawnPending = null;
+    startNextRhythmRound(spawnAlignment);
+    return true;
+  }
+
+  function cancelPendingRhythmSpawn(reason) {
+    const pending = state.rhythmSpawnPending;
+    if (!pending) return;
+    notifyDebug('onRhythmSpawnCancelled', { ...pending, reason, floor: state.progress, mode: state.mode });
+    state.rhythmSpawnPending = null;
+  }
+
   function isBallInZone() {
     return isCurrentRhythmHit(state.rhythmRound, currentHitZoneWidth());
   }
 
-  function startNextRhythmRound() {
+  function startNextRhythmRound(spawnAlignment = null) {
+    state.rhythmSpawnPending = null;
     state.rhythmRoundSerial += 1;
     const round = createRhythmRound(
       random,
@@ -384,8 +464,12 @@ export function createGame(options = {}) {
       round.isLowBloodSugarDisabled =
         state.lowBloodSugarRhythmBallCount % GAME_CONFIG.lowBloodSugarRhythmInterval === 0;
     }
+    round.bgmSpawnAlignment = spawnAlignment;
     state.rhythmRound = round;
-    notifyDebug('onRhythmRoundCreated', rhythmDebugData(state.rhythmRound));
+    notifyDebug('onRhythmRoundCreated', {
+      ...rhythmDebugData(state.rhythmRound),
+      bgmSpawnAlignment: spawnAlignment
+    });
   }
 
   function collectRhythmOrb(orb) {
@@ -544,6 +628,7 @@ export function createGame(options = {}) {
       ? Math.round(state.runUpgrades.baseAttackDamage * (successCount / totalCount))
       : 0;
     state.rhythmRound = null;
+    cancelPendingRhythmSpawn('combat-attack-round-finished');
     beginCombatRapidTap(isPerfect);
   }
 
@@ -718,7 +803,7 @@ export function createGame(options = {}) {
     state.rhythmLaunchSerial = rhythmLaunchSerial;
   }
 
-  function finishRhythmRound(round) {
+  function finishRhythmRound(round, gameTimerMs) {
     if (state.rhythmRound !== round) return;
     round.phase = RHYTHM_PHASE.FINISHED;
     notifyDebug('onRhythmRoundFinished', {
@@ -727,17 +812,50 @@ export function createGame(options = {}) {
       perfect: round.resolvedKind === 'hit'
     });
     if (state.mode === 'COMBAT_ATTACK') {
+      state.rhythmSpawnPending = null;
       finishCombatAttackRound(round);
       return;
     }
-    const beatDurationMs = Number(round.beatDurationMs) || rhythmBeatDurationForCurrentDebuff();
-    round.respawnRemainingMs = beatDurationMs * GAME_CONFIG.rhythmRespawnDelayBeats;
+    const pending = queueRhythmRoundAtBgmBeat(
+      GAME_CONFIG.rhythmRespawnDelayBeats,
+      gameTimerMs,
+      'after-rhythm-ball'
+    );
+    round.respawnRemainingMs = pending.remainingMs;
   }
 
-  function advanceRhythm(deltaMs) {
-    let remainingMs = Math.max(0, deltaMs);
-    while (remainingMs > 1e-6 && (state.mode === 'CLIMBING' || state.mode === 'COMBAT_ATTACK') && state.rhythmRound) {
+  function advanceRhythm(deltaMs, gameTimerStartMs = state.timerMs - deltaMs) {
+    const totalMs = Math.max(0, deltaMs);
+    let remainingMs = totalMs;
+    while (remainingMs > 1e-6 &&
+        (state.mode === 'CLIMBING' || state.mode === 'COMBAT_ATTACK') &&
+        (state.rhythmRound || state.rhythmSpawnPending)) {
       const round = state.rhythmRound;
+      const gameTimerAtStep = gameTimerStartMs + totalMs - remainingMs;
+
+      if (state.rhythmSpawnPending && (!round || round.phase === RHYTHM_PHASE.FINISHED)) {
+        const pending = state.rhythmSpawnPending;
+        const clock = bgmClockAt(gameTimerAtStep);
+        const timeToSpawnMs = (pending.targetBeat - clock.beatPosition) * clock.beatDurationMs;
+        pending.remainingMs = Math.max(0, timeToSpawnMs);
+        if (round?.phase === RHYTHM_PHASE.FINISHED) round.respawnRemainingMs = pending.remainingMs;
+
+        if (timeToSpawnMs <= 1e-4) {
+          spawnScheduledRhythmRound(gameTimerAtStep);
+          continue;
+        }
+
+        const elapsedMs = Math.min(remainingMs, timeToSpawnMs);
+        remainingMs -= elapsedMs;
+        if (elapsedMs + 1e-4 >= timeToSpawnMs) {
+          const spawnTimerMs = gameTimerStartMs + totalMs - remainingMs;
+          spawnScheduledRhythmRound(spawnTimerMs);
+          continue;
+        }
+        break;
+      }
+
+      if (!round) break;
       if (round.phase === RHYTHM_PHASE.SPAWN_READY) {
         const untilLaunchMs = Math.max(0, round.readyDurationMs - round.readyElapsedMs);
         const elapsedMs = Math.min(remainingMs, untilLaunchMs);
@@ -752,14 +870,14 @@ export function createGame(options = {}) {
       }
 
       if (round.phase === RHYTHM_PHASE.FINISHED) {
-        const elapsedMs = Math.min(remainingMs, round.respawnRemainingMs);
-        round.respawnRemainingMs = Math.max(0, round.respawnRemainingMs - elapsedMs);
-        remainingMs -= elapsedMs;
-        if (round.respawnRemainingMs <= 1e-6) {
-          startNextRhythmRound();
-          continue;
-        }
-        break;
+        // A finished climbing ball always has an absolute BGM beat target.
+        // Recreate the pending schedule safely if state was restored without it.
+        queueRhythmRoundAtBgmBeat(
+          GAME_CONFIG.rhythmRespawnDelayBeats,
+          gameTimerAtStep,
+          'after-rhythm-ball'
+        );
+        continue;
       }
 
       const durationMs = rhythmRoundDurationMs(round);
@@ -770,7 +888,7 @@ export function createGame(options = {}) {
         remainingMs -= elapsedMs;
         if (round.elapsedMs + 1e-6 >= durationMs) {
           round.elapsedMs = durationMs;
-          finishRhythmRound(round);
+          finishRhythmRound(round, gameTimerStartMs + totalMs - remainingMs);
           continue;
         }
         break;
@@ -781,14 +899,14 @@ export function createGame(options = {}) {
         remainingMs -= elapsedMs;
         if (round.elapsedMs + 1e-6 >= durationMs) {
           round.elapsedMs = durationMs;
-          finishRhythmRound(round);
+          finishRhythmRound(round, gameTimerStartMs + totalMs - remainingMs);
           continue;
         }
         break;
       }
 
       if (round.phase !== RHYTHM_PHASE.MOVING) {
-        finishRhythmRound(round);
+        finishRhythmRound(round, gameTimerAtStep);
         continue;
       }
 
@@ -822,7 +940,7 @@ export function createGame(options = {}) {
           }
           expireRhythmTarget(round, openIndex);
         }
-        finishRhythmRound(round);
+        finishRhythmRound(round, gameTimerStartMs + totalMs - remainingMs);
         continue;
       }
       if (remainingMs <= 1e-6) break;
@@ -943,6 +1061,7 @@ export function createGame(options = {}) {
   }
 
   function finishGame() {
+    cancelPendingRhythmSpawn('game-finished');
     state.progress = GAME_CONFIG.maxFloor;
     state.mode = 'RESULT';
     state.activeQte = null;
@@ -1029,7 +1148,11 @@ export function createGame(options = {}) {
     state.combatDefenseRound = null;
     state.combatRapidTap = null;
     state.mode = 'CLIMBING';
-    startNextRhythmRound();
+    queueRhythmRoundAtBgmBeat(
+      GAME_CONFIG.rhythmRespawnDelayBeats,
+      state.timerMs,
+      'resume-after-qte'
+    );
     setFeedback(effectResult.message, effectResult.kind);
   }
 
@@ -1091,7 +1214,11 @@ export function createGame(options = {}) {
     state.eventPhaseElapsedMs = 0;
     state.eventPhaseDurationMs = 0;
     state.mode = 'CLIMBING';
-    startNextRhythmRound();
+    queueRhythmRoundAtBgmBeat(
+      GAME_CONFIG.rhythmRespawnDelayBeats,
+      state.timerMs,
+      'resume-after-qte-failure'
+    );
     updateSkipSkillWindow();
   }
 
@@ -1100,6 +1227,7 @@ export function createGame(options = {}) {
       beginCombatVictory();
       return;
     }
+    cancelPendingRhythmSpawn('combat-attack-intro');
     state.rhythmRound = null;
     state.combatDefenseRound = null;
     state.combatRapidTap = null;
@@ -1114,7 +1242,7 @@ export function createGame(options = {}) {
     state.eventPhaseElapsedMs = 0;
     state.eventPhaseDurationMs = 0;
     state.mode = 'COMBAT_ATTACK';
-    startNextRhythmRound();
+    queueRhythmRoundAtBgmBeat(0, state.timerMs, 'combat-attack-start');
   }
 
   function beginCombatDefenseIntro() {
@@ -1122,6 +1250,7 @@ export function createGame(options = {}) {
       beginCombatVictory();
       return;
     }
+    cancelPendingRhythmSpawn('combat-defense-intro');
     state.rhythmRound = null;
     state.combatRapidTap = null;
     state.combatDefenseRound = createCombatDefenseRound();
@@ -1158,6 +1287,7 @@ export function createGame(options = {}) {
         monsterId: state.activeMonster.id
       });
     }
+    cancelPendingRhythmSpawn('combat-victory');
     state.combatDefenseRound = null;
     state.rhythmRound = null;
     state.combatRapidTap = null;
@@ -1179,6 +1309,7 @@ export function createGame(options = {}) {
     state.activeQte = null;
     state.preparedQte = null;
     state.rhythmRound = null;
+    cancelPendingRhythmSpawn('combat-complete');
 
     if (event && !event.upgradeRewardGranted) {
       event.upgradeRewardGranted = true;
@@ -1191,7 +1322,11 @@ export function createGame(options = {}) {
     state.activeMonsterEvent = null;
     state.upgradeChoices = [];
     state.mode = 'CLIMBING';
-    startNextRhythmRound();
+    queueRhythmRoundAtBgmBeat(
+      GAME_CONFIG.rhythmRespawnDelayBeats,
+      state.timerMs,
+      'resume-after-combat'
+    );
     setFeedback(UI_TEXT.combatMonsterDefeated, 'success');
   }
 
@@ -1210,7 +1345,11 @@ export function createGame(options = {}) {
     state.upgradeChoices = [];
     state.activeMonsterEvent = null;
     state.mode = 'CLIMBING';
-    startNextRhythmRound();
+    queueRhythmRoundAtBgmBeat(
+      GAME_CONFIG.rhythmRespawnDelayBeats,
+      state.timerMs,
+      'resume-after-upgrade-selection'
+    );
     updateSkipSkillWindow();
     previousFrameTime = null;
     const card = UPGRADE_CARDS.find((candidate) => candidate.id === cardId);
@@ -1314,6 +1453,7 @@ export function createGame(options = {}) {
       });
     }
     state.rhythmRound = null;
+    cancelPendingRhythmSpawn('monster-event');
     state.eventPhaseElapsedMs = 0;
     state.eventPhaseDurationMs = GAME_CONFIG.monsterWarningFlashCount * GAME_CONFIG.monsterWarningFlashDurationMs +
       Math.max(0, GAME_CONFIG.monsterWarningFlashCount - 1) * GAME_CONFIG.monsterWarningGapDurationMs;
@@ -1604,7 +1744,7 @@ export function createGame(options = {}) {
       }
       if (state.mode === 'COMBAT_ATTACK') {
         const beforeMs = remainingMs;
-        remainingMs = advanceRhythm(remainingMs);
+        remainingMs = advanceRhythm(remainingMs, state.timerMs);
         state.timerMs += beforeMs - remainingMs;
         if (state.mode !== 'COMBAT_ATTACK' && remainingMs > 1e-6) continue;
         remainingMs = 0;

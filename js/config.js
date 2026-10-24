@@ -83,11 +83,11 @@ export const GAME_CONFIG = Object.freeze({
   skipSkillEnergyRequired: 48,
   skipSkillActivationSeconds: 2,
   skipSkillRhythmEnergy: Object.freeze({
-    RED: 1.0,
-    BLUE: 1.0,
-    YELLOW: 3.0,
+    RED: 2.0,
+    BLUE: 2.0,
+    YELLOW: 4.0,
     GREEN: 6.0,
-    PURPLE: 10.0
+    PURPLE: 11.0
   }),
   skipSkillComboEnergyBonusPerCombo: 0.01,
   skipSkillComboEnergyBonusMaxCombo: 12,
@@ -111,6 +111,7 @@ export const GAME_CONFIG = Object.freeze({
   rhythmReadyRingStartScale: 1.9,
   rhythmReadyFlashMs: 100,
   rhythmRespawnDelayBeats: 1,
+  rhythmBgmBeatSnapToleranceMs: 8,
   heartPalpitationsWobbleIntervalMs: 1800,
   heartPalpitationsWobbleDurationMs: 250,
   heartPalpitationsWobbleXAmplitudePx: 10,

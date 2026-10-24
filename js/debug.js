@@ -164,6 +164,29 @@ export function createDebugController() {
 
   function onRhythmRoundCreated(details) {
     recordCreatedRound(details);
+    const alignment = details.bgmSpawnAlignment;
+    if (alignment) {
+      console.info('[DEBUG MODE] 節奏球生成同步', {
+        '排程時 BGM 拍位': alignment.scheduledAtBeat,
+        對齊整數拍: alignment.alignedBeat,
+        預定生成拍位: alignment.targetBeat,
+        實際生成拍位: alignment.actualBeatPosition,
+        '生成偏差毫秒': alignment.generationOffsetMs,
+        來源: alignment.source,
+        原因: alignment.reason
+      });
+    }
+  }
+
+  function onRhythmSpawnScheduled(details) {
+    console.info('[DEBUG MODE] 節奏球生成已排程', {
+      '排程時 BGM 拍位': details.scheduledAtBeat,
+      對齊整數拍: details.alignedBeat,
+      預定生成拍位: details.targetBeat,
+      等待毫秒: details.remainingMs,
+      來源: details.source,
+      原因: details.reason
+    });
   }
 
   function onRhythmTargetResolved(details) {
@@ -230,6 +253,7 @@ export function createDebugController() {
 
   const hooks = Object.freeze({
     onRhythmRoundCreated,
+    onRhythmSpawnScheduled,
     onRhythmTargetResolved,
     onRhythmRoundResolved,
     onRhythmRoundFinished,
