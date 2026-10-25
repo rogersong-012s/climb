@@ -37,6 +37,7 @@ function freshState(bestTimeMs = null, antiDizzinessMode = ANTI_DIZZINESS_MODE.O
     temporarySpeedBonusRemainingMs: 0,
     skipSkillEnergy: 0,
     skipSkillCharges: 0,
+    encounterQteFailureCount: 0,
     stepPhase: 0,
     pendingMonsterEvent: null,
     activeMonsterEvent: null,
@@ -47,7 +48,10 @@ function freshState(bestTimeMs = null, antiDizzinessMode = ANTI_DIZZINESS_MODE.O
     runUpgrades: {
       baseAttackDamage: GAME_CONFIG.combatBaseAttackDamage,
       rapidTapDamage: GAME_CONFIG.combatRapidTapDamageMultiplier,
-      rhythmJudgmentLevel: 0
+      rhythmJudgmentLevel: 0,
+      rapidTapDurationLevel: 0,
+      qteDurationLevel: 0,
+      maxClimbSpeedLevel: 0
     },
     combatDefenseRound: null,
     combatRapidTap: null,
@@ -367,6 +371,14 @@ export function createGame(options = {}) {
     return rhythmBeatDurationForCurrentDebuff() * GAME_CONFIG.rhythmPrepareBeats;
   }
 
+  function qteDurationForContext(context) {
+    const upgradeBonusMs = state.runUpgrades.qteDurationLevel * GAME_CONFIG.upgradeQteDurationBonusMs;
+    const failureBonusMs = context === QTE_CONTEXT.ENCOUNTER
+      ? state.encounterQteFailureCount * GAME_CONFIG.monsterQteFailureCompensationMs
+      : 0;
+    return GAME_CONFIG.monsterQteDurationMs + upgradeBonusMs + failureBonusMs;
+  }
+
   function bgmClockAt(gameTimerMs = state.timerMs) {
     if (getBgmClock) {
       try {
@@ -637,11 +649,13 @@ export function createGame(options = {}) {
       beginCombatVictory();
       return;
     }
+    const durationUpgradeMultiplier = 1 +
+      state.runUpgrades.rapidTapDurationLevel * GAME_CONFIG.upgradeRapidTapDurationBonus;
     state.rhythmRound = null;
     state.combatRapidTap = {
       elapsedMs: 0,
       durationMs: enabled
-        ? GAME_CONFIG.combatRapidTapDurationMs / GAME_CONFIG.rhythmMoveSpeedMultiplier
+        ? (GAME_CONFIG.combatRapidTapDurationMs / GAME_CONFIG.rhythmMoveSpeedMultiplier) * durationUpgradeMultiplier
         : GAME_CONFIG.combatRapidTapDisabledDurationMs,
       prepareRemainingMs: enabled ? GAME_CONFIG.combatRapidTapPrepareDelayMs : 0,
       tapCount: 0,
@@ -1089,6 +1103,7 @@ export function createGame(options = {}) {
     const context = state.activeQte?.context === QTE_CONTEXT.DEFENSE_RECOVERY
       ? QTE_CONTEXT.DEFENSE_RECOVERY
       : QTE_CONTEXT.ENCOUNTER;
+    if (context === QTE_CONTEXT.ENCOUNTER) state.encounterQteFailureCount = 0;
     state.qteItemUse = {
       context,
       solution,
@@ -1181,6 +1196,9 @@ export function createGame(options = {}) {
 
     const monster = state.activeQte?.monster;
     if (!monster) return;
+    if (state.activeQte?.context === QTE_CONTEXT.ENCOUNTER) {
+      state.encounterQteFailureCount += 1;
+    }
     const event = state.activeMonsterEvent;
     const knockbackFloors = GAME_CONFIG.monsterQteFailureKnockbackFloors;
     state.stats.qteLosses += 1;
@@ -1338,6 +1356,13 @@ export function createGame(options = {}) {
       state.runUpgrades.rapidTapDamage += GAME_CONFIG.upgradeRapidTapDamageBonus;
     } else if (cardId === 'rhythm-precision') {
       state.runUpgrades.rhythmJudgmentLevel += 1;
+    } else if (cardId === 'rapid-tap-duration') {
+      state.runUpgrades.rapidTapDurationLevel += 1;
+    } else if (cardId === 'qte-duration') {
+      state.runUpgrades.qteDurationLevel += 1;
+    } else if (cardId === 'max-speed') {
+      state.runUpgrades.maxClimbSpeedLevel += 1;
+      state.maxClimbSpeed += GAME_CONFIG.upgradeMaxClimbSpeedBonus;
     } else {
       return false;
     }
@@ -1408,7 +1433,7 @@ export function createGame(options = {}) {
     state.activeQte = createQte(
       monster,
       random,
-      GAME_CONFIG.monsterQteDurationMs,
+      qteDurationForContext(QTE_CONTEXT.DEFENSE_RECOVERY),
       { context: QTE_CONTEXT.DEFENSE_RECOVERY, solutions: [correctSolution] }
     );
     state.activeQte.monsterHp = state.monsterHp;
@@ -1440,7 +1465,7 @@ export function createGame(options = {}) {
     state.preparedQte = createQte(
       state.activeMonster,
       random,
-      GAME_CONFIG.monsterQteDurationMs,
+      qteDurationForContext(QTE_CONTEXT.ENCOUNTER),
       { context: QTE_CONTEXT.ENCOUNTER }
     );
     state.preparedQte.monsterHp = state.monsterHp;

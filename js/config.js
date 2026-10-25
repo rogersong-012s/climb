@@ -134,6 +134,7 @@ export const GAME_CONFIG = Object.freeze({
   // Keep weights centralized so future rhythm types can be tuned without changing selection logic.
   rhythmTypeWeights: Object.freeze({ RED: 1, BLUE: 1, YELLOW: 1, GREEN: 1, PURPLE: 1 }),
   monsterQteDurationMs: 2900,
+  monsterQteFailureCompensationMs: 500,
   monsterQteFailureKnockbackFloors: 3,
   monsterQteFailureNoticeDurationMs: 1000,
   monsterEntranceShakeDurationMs: 300,
@@ -158,11 +159,14 @@ export const GAME_CONFIG = Object.freeze({
   combatDefenseResultDurationMs: 650,
   combatRapidTapDisabledDurationMs: 500,
   combatBaseAttackDamage: 20,
-  upgradeBaseAttackBonus: 5,
+  upgradeBaseAttackBonus: 8,
   combatRapidTapPrepareDelayMs: 100,
   combatRapidTapDurationMs: 2000,
   combatRapidTapDamageMultiplier: 2,
   upgradeRapidTapDamageBonus: 0.6,
+  upgradeRapidTapDurationBonus: 0.1,
+  upgradeQteDurationBonusMs: 300,
+  upgradeMaxClimbSpeedBonus: 0.01,
   upgradeRhythmJudgmentBonus: 0.1,
   upgradeChoiceCount: 2,
   combatRapidTapBallScale: 0.7,
@@ -283,6 +287,27 @@ export const UPGRADE_CARDS = Object.freeze([
     name: '節奏精準強化',
     description: '節奏判定範圍 +' + Math.round(GAME_CONFIG.upgradeRhythmJudgmentBonus * 100) + '%',
     icon: '◎',
+    accent: 'lime'
+  }),
+  Object.freeze({
+    id: 'rapid-tap-duration',
+    name: '連打時間延長',
+    description: '連打時間 +' + Math.round(GAME_CONFIG.upgradeRapidTapDurationBonus * 100) + '%',
+    icon: 'ϟ',
+    accent: 'orange'
+  }),
+  Object.freeze({
+    id: 'qte-duration',
+    name: 'QTE 時間延長',
+    description: '遭遇與補救 QTE +' + (GAME_CONFIG.upgradeQteDurationBonusMs / 1000).toFixed(1) + ' 秒',
+    icon: '◷',
+    accent: 'blue'
+  }),
+  Object.freeze({
+    id: 'max-speed',
+    name: '速度上限強化',
+    description: '攀登速度上限 +' + GAME_CONFIG.upgradeMaxClimbSpeedBonus.toFixed(2) + ' F/s',
+    icon: '↑',
     accent: 'lime'
   })
 ]);
