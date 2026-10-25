@@ -1064,6 +1064,9 @@ export function createUI(onAction) {
   let lastHeartWobbleSerial = 0;
   const trackZones = byId('track-zones');
   const rhythmLabel = byId('rhythm-label');
+  const desktopControlHint = document.querySelector('.control-hint .desktop-hint');
+  const mobileControlHint = document.querySelector('.control-hint .mobile-hint');
+  const controlHintCopy = byId('control-hint-copy');
   const ball = byId('rhythm-ball');
   const ballVisual = byId('rhythm-ball-visual');
   const skipSkillButton = byId('skip-skill');
@@ -1350,6 +1353,7 @@ export function createUI(onAction) {
       ['計算傷害 / 實際扣血', formatReportNumber(combat.calculatedDamage, 2) + ' / ' + formatReportNumber(combat.actualDamage, 2)],
       ['基礎攻擊傷害', formatReportNumber(combat.baseAttackDamage, 2)],
       ['連打傷害', formatReportNumber(combat.rapidTapDamage, 2)],
+      ['有效連打輸入（A / D）', (combat.rapidTapKeyboardA ?? 0) + ' / ' + (combat.rapidTapKeyboardD ?? 0) + ' 次 · 全部 ' + (combat.rapidTapInputCount ?? 0)],
       ['節奏顏色加成傷害', formatReportNumber(combat.colorMultiplierBonusDamage, 2)],
       ['QTE 強化傷害', formatReportNumber(combat.qteDamage, 2)],
       ['每隻擊敗怪物平均戰鬥時間', formatReportSeconds(combat.averageBattleSecondsPerDefeatedMonster)]
@@ -1360,7 +1364,11 @@ export function createUI(onAction) {
       ['被踢退樓次數', String(qte.knockbackCount ?? 0)],
       ['反應強化取得次數', String(qte.qteTimeUpgradeCount ?? 0)],
       ['最大失敗補償時間', formatReportSeconds(qte.maxFailureCompensationSeconds)],
-      ['QTE 傷害', formatReportNumber(qte.qteDamage, 2)]
+      ['初遇 QTE 強化傷害', formatReportNumber(qte.encounterQteDamage, 2)],
+      ['盾牌防禦強化傷害', formatReportNumber(qte.shieldQteDamage, 2)],
+      ['盾牌成功防禦 / 攻擊次數', (qte.shieldDefenseSuccesses ?? 0) + ' / ' + (qte.shieldDefenseAttempts ?? 0)],
+      ['反應傷害觸發（初遇 / 盾牌）', (qte.encounterReactionDamageTriggers ?? 0) + ' / ' + (qte.shieldReactionDamageTriggers ?? 0)],
+      ['QTE 強化總傷害', formatReportNumber(qte.qteDamage, 2)]
     ];
     const energyRows = [
       ['基礎能量', formatReportNumber(energy.baseEnergy, 2)],
@@ -1407,7 +1415,9 @@ export function createUI(onAction) {
         '#' + (monster.monsterOrdinal ?? '—') + ' ' + name + ' · ' + monster.floor + 'F',
         resultName + ' · 遭遇 ' + monster.encounterAttempts + ' 次' +
           ((monster.encounterHistory?.length ?? 0) > 1 ? '（重遇樓層：' + monster.encounterHistory.slice(1).map((attempt) => attempt.floor + 'F').join('、') + '）' : '') +
-          ' · 攻擊 ' + monster.attackRounds + ' 回合 · 實扣 ' + formatReportNumber(monster.totalDamage, 2) + ' · QTE 傷害 ' + formatReportNumber(monster.qteDamage, 2)
+          ' · 攻擊 ' + monster.attackRounds + ' 回合 · 實扣 ' + formatReportNumber(monster.totalDamage, 2) +
+          ' · 初遇 QTE ' + formatReportNumber(monster.encounterQteDamage, 2) +
+          ' · 盾牌 QTE ' + formatReportNumber(monster.shieldQteDamage, 2)
       ];
     });
     const splitRows = (report.floorSplits ?? []).map((split) => [
@@ -2041,6 +2051,13 @@ export function createUI(onAction) {
 
   function updateRhythmTrack(state, game) {
     const activeMode = state.mode === 'PAUSED' ? state.resumeMode : state.mode;
+    const rapidTap = activeMode === 'COMBAT_RAPID_TAP' ? state.combatRapidTap : null;
+    const rapidTapControlsActive = Boolean(rapidTap && !rapidTap.disabled);
+    if (desktopControlHint) desktopControlHint.textContent = rapidTapControlsActive ? 'A / D 連打' : 'SPACE';
+    if (mobileControlHint) mobileControlHint.textContent = rapidTapControlsActive ? '觸控連打' : '點擊任意處';
+    if (controlHintCopy) controlHintCopy.textContent = rapidTapControlsActive
+      ? (globalThis.matchMedia?.('(pointer: coarse)')?.matches ? '快速輸出' : '可同時按')
+      : '依序踩拍';
     const mobileWobble = globalThis.matchMedia?.('(max-width: 600px)')?.matches ?? false;
     const reducedMotion = globalThis.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches ?? false;
     const heartProfile = [mobileWobble, reducedMotion, state.antiDizzinessMode].join(':');
@@ -2061,7 +2078,6 @@ export function createUI(onAction) {
       trackShake.style.setProperty('--heart-wobble-tiny-y', y * .2 + 'px');
     }
     const round = state.rhythmRound;
-    const rapidTap = activeMode === 'COMBAT_RAPID_TAP' ? state.combatRapidTap : null;
     const windows = game.getRhythmHitWindows();
     const ballDiameter = 25;
     const ballRadius = ballDiameter / 2;

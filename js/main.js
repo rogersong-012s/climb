@@ -94,6 +94,14 @@ document.addEventListener('pointerdown', () => {
 }, { passive: true });
 
 document.addEventListener('keydown', (event) => {
+  if (event.code === 'KeyA' || event.code === 'KeyD') {
+    if (event.target instanceof Element && event.target.closest('button, input, select, textarea, [contenteditable="true"]')) return;
+    if (game.getState().mode !== 'COMBAT_RAPID_TAP' || event.repeat) return;
+    event.preventDefault();
+    void rhythmAudio.unlock();
+    game.pressRhythm(undefined, event.code === 'KeyA' ? 'keyboard-a' : 'keyboard-d');
+    return;
+  }
   if (event.code === 'Space') {
     if (event.target instanceof Element && event.target.closest('button, input, select, textarea, [contenteditable="true"]')) return;
     event.preventDefault();

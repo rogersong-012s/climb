@@ -22,6 +22,11 @@ const COMBAT_TIMED_PHASES = new Set([
 const COMBAT_MODES = new Set(['COMBAT_ATTACK', 'COMBAT_RAPID_TAP', 'COMBAT_DEFENSE', ...COMBAT_TIMED_PHASES]);
 const PAUSABLE_MODES = new Set(['CLIMBING', 'UPGRADE_SELECT', ...MONSTER_EVENT_PHASES, 'MONSTER_QTE', ...COMBAT_MODES]);
 const HEART_PALPITATION_TRACK_MODES = new Set(['CLIMBING', 'COMBAT_ATTACK', 'COMBAT_RAPID_TAP']);
+const REACTION_UPGRADE_CONTEXT = Object.freeze({
+  ENCOUNTER: QTE_CONTEXT.ENCOUNTER,
+  SHIELD_DEFENSE: 'shield-defense',
+  DEFENSE_RECOVERY: QTE_CONTEXT.DEFENSE_RECOVERY
+});
 
 function freshState(bestTimeMs = null, antiDizzinessMode = ANTI_DIZZINESS_MODE.OFF) {
   const stairNode = stairNodeAt(GAME_CONFIG.startFloor);
@@ -271,7 +276,9 @@ export function createGame(options = {}) {
       rapidTapDamagePerTap: rapidTapDamageForRun(),
       rhythmJudgmentMultiplier: 1 + upgradeCount('rhythm-precision') * upgradeEffectAmount('rhythm-precision'),
       rapidTapDurationMultiplier: 1 + upgradeCount('rapid-tap-duration') * upgradeEffectAmount('rapid-tap-duration'),
-      qteDurationSeconds: (GAME_CONFIG.monsterQteDurationMs + qteUpgradeCount * upgradeEffectAmount('qte-duration', 'perSelectionMs')) / 1000,
+      encounterQteDurationSeconds: (GAME_CONFIG.monsterQteDurationMs + qteUpgradeCount * upgradeEffectAmount('qte-duration', 'perSelectionMs')) / 1000,
+      defenseRecoveryQteDurationSeconds: GAME_CONFIG.monsterQteDurationMs / 1000,
+      shieldDefenseWindowSeconds: (GAME_CONFIG.combatDefenseHitWindowMs + qteUpgradeCount * upgradeEffectAmount('qte-duration', 'perSelectionMs')) / 1000,
       qteSuccessDamageRatio: qteUpgradeCount * upgradeEffectAmount('qte-duration', 'successDamageRatioPerSelection'),
       speedFloorsPerSecond: state.climbSpeed,
       speedCapFloorsPerSecond: state.maxClimbSpeed,
@@ -301,19 +308,25 @@ export function createGame(options = {}) {
     runStatistics?.recordTime(timeCategoryForCurrentMode(), elapsedMs);
   }
 
-  function applyQteSuccessDamage(event = state.activeMonsterEvent) {
+  function applyReactionUpgradeDamage(source, event = state.activeMonsterEvent) {
+    if (![REACTION_UPGRADE_CONTEXT.ENCOUNTER, REACTION_UPGRADE_CONTEXT.SHIELD_DEFENSE].includes(source)) return 0;
     const upgradeCountForQte = upgradeCount('qte-duration');
     const damageRatio = upgradeCountForQte * upgradeEffectAmount('qte-duration', 'successDamageRatioPerSelection');
     if (!state.activeMonster || !state.monsterMaxHp || damageRatio <= 0) return 0;
     const calculatedDamage = state.monsterMaxHp * damageRatio;
     const actualDamage = Math.min(Math.max(0, state.monsterHp ?? 0), calculatedDamage);
     state.monsterHp = Math.max(0, (state.monsterHp ?? 0) - actualDamage);
-    if (state.activeQte) {
+    if (state.activeQte && source === REACTION_UPGRADE_CONTEXT.ENCOUNTER) {
       state.activeQte.monsterHp = state.monsterHp;
       state.activeQte.monsterMaxHp = state.monsterMaxHp;
     }
-    runStatistics?.recordQteDamage(event, calculatedDamage, actualDamage);
+    runStatistics?.recordQteDamage(event, calculatedDamage, actualDamage, source);
     return actualDamage;
+  }
+
+  function combatDefenseHitWindowForRun() {
+    return GAME_CONFIG.combatDefenseHitWindowMs +
+      upgradeCount('qte-duration') * upgradeEffectAmount('qte-duration', 'perSelectionMs');
   }
 
   function rhythmDebugData(round, mode = state.mode) {
@@ -497,7 +510,9 @@ export function createGame(options = {}) {
   }
 
   function qteDurationForContext(context) {
-    const upgradeBonusMs = upgradeCount('qte-duration') * upgradeEffectAmount('qte-duration', 'perSelectionMs');
+    const upgradeBonusMs = context === QTE_CONTEXT.ENCOUNTER
+      ? upgradeCount('qte-duration') * upgradeEffectAmount('qte-duration', 'perSelectionMs')
+      : 0;
     const failureBonusMs = context === QTE_CONTEXT.ENCOUNTER
       ? state.encounterQteFailureCount * GAME_CONFIG.monsterQteFailureCompensationMs
       : 0;
@@ -889,7 +904,7 @@ export function createGame(options = {}) {
         launchTimeMs,
         flightDurationMs: Math.max(0, attackTimeMs - launchTimeMs),
         attackTimeMs,
-        windowStartMs: attackTimeMs - GAME_CONFIG.combatDefenseHitWindowMs,
+        windowStartMs: Math.max(0, attackTimeMs - combatDefenseHitWindowForRun()),
         status: 'scheduled'
       };
     });
@@ -945,18 +960,22 @@ export function createGame(options = {}) {
       }
     });
 
-    round.attacks.forEach((attack, attackIndex) => {
+    for (let attackIndex = 0; attackIndex < round.attacks.length; attackIndex += 1) {
+      const attack = round.attacks[attackIndex];
       if (attack.status === 'scheduled' && elapsedMs >= attack.windowStartMs) {
         attack.status = 'active';
       }
       if (elapsedMs + 1e-6 < attack.attackTimeMs ||
-          !['active', 'defended'].includes(attack.status)) return;
+          !['active', 'defended'].includes(attack.status)) continue;
 
       if (attack.status === 'defended') {
         attack.status = 'blocked';
+        runStatistics?.recordShieldDefenseResult(state.activeMonsterEvent, true);
+        applyReactionUpgradeDamage(REACTION_UPGRADE_CONTEXT.SHIELD_DEFENSE, state.activeMonsterEvent);
       } else {
         attack.status = 'missed';
         round.failed = true;
+        runStatistics?.recordShieldDefenseResult(state.activeMonsterEvent, false);
         const nextAttack = round.attacks[attackIndex + 1];
         round.shieldCracked = true;
         round.shieldCrackAttackId = attack.id;
@@ -968,7 +987,11 @@ export function createGame(options = {}) {
       }
       state.combatDefenseImpactSerial += 1;
       round.resolvedCount += 1;
-    });
+      if (attack.status === 'blocked' && (state.monsterHp ?? 0) <= 0) {
+        beginCombatVictory();
+        return;
+      }
+    }
 
     if (round.shieldCracked && round.shieldCrackClearAtMs !== null &&
         elapsedMs >= round.shieldCrackClearAtMs) {
@@ -1318,7 +1341,9 @@ export function createGame(options = {}) {
       ? QTE_CONTEXT.DEFENSE_RECOVERY
       : QTE_CONTEXT.ENCOUNTER;
     runStatistics?.recordQteResult(context, true);
-    const qteDamage = applyQteSuccessDamage(state.activeMonsterEvent);
+    const qteDamage = context === QTE_CONTEXT.ENCOUNTER
+      ? applyReactionUpgradeDamage(REACTION_UPGRADE_CONTEXT.ENCOUNTER, state.activeMonsterEvent)
+      : 0;
     if (context === QTE_CONTEXT.ENCOUNTER) state.encounterQteFailureCount = 0;
     state.qteItemUse = {
       context,
@@ -1849,25 +1874,26 @@ export function createGame(options = {}) {
     return { status: 'defended', attackId: attack.id };
   }
 
-  function pressCombatRapidTap() {
+  function pressCombatRapidTap(inputSource = 'manual') {
     const rapidTap = state.combatRapidTap;
     if (!rapidTap || rapidTap.disabled || rapidTap.prepareRemainingMs > 0 ||
         rapidTap.elapsedMs >= rapidTap.durationMs) return { status: 'ignored' };
     rapidTap.tapCount += 1;
+    runStatistics?.recordRapidTapInput(inputSource, runMode === 'debug');
     state.rhythmTapSerial = ++rhythmTapSerial;
     setFeedback('連打 ×' + rapidTap.tapCount, 'hit');
     notify();
     return { status: 'tap', tapCount: rapidTap.tapCount };
   }
 
-  function pressRhythm(timestamp = globalThis.performance?.now?.()) {
+  function pressRhythm(timestamp = globalThis.performance?.now?.(), inputSource = 'manual') {
     const modeBeforeUpdate = state.mode;
     const roundBeforeUpdate = state.rhythmRound;
     if (previousFrameTime !== null && Number.isFinite(timestamp)) update(timestamp);
     if (state.mode !== modeBeforeUpdate) return { status: 'ignored' };
 
     if (modeBeforeUpdate === 'COMBAT_DEFENSE') return tryDefendCentralShield();
-    if (modeBeforeUpdate === 'COMBAT_RAPID_TAP') return pressCombatRapidTap();
+    if (modeBeforeUpdate === 'COMBAT_RAPID_TAP') return pressCombatRapidTap(inputSource);
     if (modeBeforeUpdate !== 'CLIMBING' && modeBeforeUpdate !== 'COMBAT_ATTACK') return { status: 'ignored' };
     // A press that advances the old ball to its endpoint must not spill into
     // the newly spawned ball, even if a long frame also consumed its ready beat.

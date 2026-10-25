@@ -48,7 +48,7 @@ function stageForFloor(floor) {
 export function createRunStatistics({ mode = 'manual', startedAtMs = Date.now() } = {}) {
   const upgradeCounts = Object.fromEntries(UPGRADE_CARDS.map((card) => [card.id, 0]));
   const data = {
-    schemaVersion: '1.0',
+    schemaVersion: '1.1',
     game: '登峰灶急',
     run: {
       mode: mode === 'debug' ? 'debug' : 'manual',
@@ -112,8 +112,17 @@ export function createRunStatistics({ mode = 'manual', startedAtMs = Date.now() 
       actualDamage: 0,
       baseAttackDamage: 0,
       rapidTapDamage: 0,
+      rapidTapInputCount: 0,
+      rapidTapKeyboardA: 0,
+      rapidTapKeyboardD: 0,
+      rapidTapOtherInputs: 0,
+      rapidTapDebugInputs: 0,
+      shieldDefenseAttempts: 0,
+      shieldDefenseSuccesses: 0,
       colorMultiplierBonusDamage: 0,
       qteDamage: 0,
+      encounterQteDamage: 0,
+      shieldQteDamage: 0,
       averageBattleSecondsPerDefeatedMonster: 0
     },
     qte: {
@@ -128,7 +137,14 @@ export function createRunStatistics({ mode = 'manual', startedAtMs = Date.now() 
       knockbackCount: 0,
       qteTimeUpgradeCount: 0,
       maxFailureCompensationSeconds: 0,
-      qteDamage: 0
+      qteDamage: 0,
+      encounterQteDamage: 0,
+      shieldQteDamage: 0,
+      reactionDamageTriggers: 0,
+      encounterReactionDamageTriggers: 0,
+      shieldReactionDamageTriggers: 0,
+      shieldDefenseAttempts: 0,
+      shieldDefenseSuccesses: 0
     },
     rhythm: {
       overall: { ballsSpawned: 0, targetsHit: 0, targetsMissed: 0, completedBalls: 0, eligibleBalls: 0, perfectBalls: 0, disabledBalls: 0, disabledTargets: 0, incorrectPresses: 0 },
@@ -193,6 +209,8 @@ export function createRunStatistics({ mode = 'manual', startedAtMs = Date.now() 
         rapidTapDamage: 0,
         colorMultiplierBonusDamage: 0,
         qteDamage: 0,
+        encounterQteDamage: 0,
+        shieldQteDamage: 0,
         encounterAttempts: 0,
         encounterHistory: []
       };
@@ -327,19 +345,44 @@ export function createRunStatistics({ mode = 'manual', startedAtMs = Date.now() 
     else data.qte.encounterFailures += 1;
   }
 
-  function recordQteDamage(event, calculatedDamage, actualDamage) {
+  function recordQteDamage(event, calculatedDamage, actualDamage, source = 'encounter') {
     const calculated = Math.max(0, Number(calculatedDamage) || 0);
     const actual = Math.max(0, Number(actualDamage) || 0);
+    const isShieldDefense = source === 'shield-defense';
+    const category = isShieldDefense ? 'shieldQteDamage' : 'encounterQteDamage';
     data.qte.qteDamage += actual;
+    data.qte[category] += actual;
+    data.qte.reactionDamageTriggers += 1;
+    data.qte[isShieldDefense ? 'shieldReactionDamageTriggers' : 'encounterReactionDamageTriggers'] += 1;
     data.combat.calculatedDamage += calculated;
     data.combat.actualDamage += actual;
     data.combat.qteDamage += actual;
+    data.combat[category] += actual;
     const record = monsterRecord(event);
     if (record) {
       record.calculatedDamage += calculated;
       record.totalDamage += actual;
       record.qteDamage += actual;
+      record[category] += actual;
     }
+  }
+
+  function recordShieldDefenseResult(event, defended) {
+    data.qte.shieldDefenseAttempts += 1;
+    data.combat.shieldDefenseAttempts += 1;
+    if (defended) {
+      data.qte.shieldDefenseSuccesses += 1;
+      data.combat.shieldDefenseSuccesses += 1;
+    }
+    monsterRecord(event);
+  }
+
+  function recordRapidTapInput(source = 'manual', isDebugRun = false) {
+    data.combat.rapidTapInputCount += 1;
+    if (source === 'keyboard-a') data.combat.rapidTapKeyboardA += 1;
+    else if (source === 'keyboard-d') data.combat.rapidTapKeyboardD += 1;
+    else if (isDebugRun) data.combat.rapidTapDebugInputs += 1;
+    else data.combat.rapidTapOtherInputs += 1;
   }
 
   function recordCombatStart(event, timerMs) {
@@ -582,10 +625,14 @@ export function createRunStatistics({ mode = 'manual', startedAtMs = Date.now() 
 
     for (const key of [
       'calculatedDamage', 'actualDamage', 'baseAttackDamage', 'rapidTapDamage',
-      'colorMultiplierBonusDamage', 'qteDamage', 'averageKillAttackRounds',
+      'rapidTapInputCount', 'rapidTapKeyboardA', 'rapidTapKeyboardD', 'rapidTapOtherInputs', 'rapidTapDebugInputs',
+      'shieldDefenseAttempts', 'shieldDefenseSuccesses', 'colorMultiplierBonusDamage', 'qteDamage',
+      'encounterQteDamage', 'shieldQteDamage', 'averageKillAttackRounds',
       'averageBattleSecondsPerDefeatedMonster'
     ]) data.combat[key] = roundNumber(data.combat[key], 4);
-    data.qte.qteDamage = roundNumber(data.qte.qteDamage, 4);
+    for (const key of ['qteDamage', 'encounterQteDamage', 'shieldQteDamage']) {
+      data.qte[key] = roundNumber(data.qte[key], 4);
+    }
     data.energy.totalEligibleEnergy = roundNumber(data.energy.totalEligibleEnergy, 6);
     data.energy.baseEnergy = roundNumber(data.energy.baseEnergy, 6);
     data.energy.comboBonusEnergy = roundNumber(data.energy.comboBonusEnergy, 6);
@@ -596,7 +643,7 @@ export function createRunStatistics({ mode = 'manual', startedAtMs = Date.now() 
     data.combat.encounterAttempts = data.qte.encounterAttempts;
 
     for (const record of data.monsterRecords) {
-      for (const key of ['battleDurationSeconds', 'calculatedDamage', 'totalDamage', 'baseAttackDamage', 'rapidTapDamage', 'colorMultiplierBonusDamage', 'qteDamage']) {
+      for (const key of ['battleDurationSeconds', 'calculatedDamage', 'totalDamage', 'baseAttackDamage', 'rapidTapDamage', 'colorMultiplierBonusDamage', 'qteDamage', 'encounterQteDamage', 'shieldQteDamage']) {
         record[key] = roundNumber(record[key], 4);
       }
     }
@@ -638,6 +685,8 @@ export function createRunStatistics({ mode = 'manual', startedAtMs = Date.now() 
     recordQteStart,
     recordQteResult,
     recordQteDamage,
+    recordShieldDefenseResult,
+    recordRapidTapInput,
     recordCombatStart,
     recordAttackRound,
     recordCombatDamage,
