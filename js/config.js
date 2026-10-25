@@ -158,16 +158,17 @@ export const GAME_CONFIG = Object.freeze({
   combatDefenseSuccessSplashOpacity: 0.22,
   combatDefenseResultDurationMs: 650,
   combatRapidTapDisabledDurationMs: 500,
-  combatBaseAttackDamage: 20,
-  upgradeBaseAttackBonus: 8,
+  combatBaseAttackDamage: 30,
   combatRapidTapPrepareDelayMs: 100,
   combatRapidTapDurationMs: 2000,
-  combatRapidTapDamageMultiplier: 2,
-  upgradeRapidTapDamageBonus: 0.6,
-  upgradeRapidTapDurationBonus: 0.1,
-  upgradeQteDurationBonusMs: 300,
-  upgradeMaxClimbSpeedBonus: 0.01,
-  upgradeRhythmJudgmentBonus: 0.1,
+  combatRapidTapDamage: 1,
+  combatRhythmDamageMultipliers: Object.freeze({
+    RED: 1,
+    BLUE: 1,
+    YELLOW: 1.05,
+    GREEN: 1.15,
+    PURPLE: 1.3
+  }),
   upgradeChoiceCount: 2,
   combatRapidTapBallScale: 0.7,
   combatDefensePatterns: Object.freeze([
@@ -189,13 +190,13 @@ export const GAME_CONFIG = Object.freeze({
   monsterEventIntervalFloors,
   monsterEventFractions: Object.freeze([0.2, 0.7]),
   monsterEventFloors,
-  monsterWarningFlashDurationMs: 600,
-  monsterWarningGapDurationMs: 250,
+  monsterWarningFlashDurationMs: 360,
+  monsterWarningGapDurationMs: 150,
   monsterWarningFlashCount: 2,
   monsterWarningMaxOpacity: 0.3,
   monsterWarningReducedMotionOpacity: 0.14,
   monsterEntranceDurationMs: 700,
-  monsterCastDurationMs: 1000,
+  monsterCastDurationMs: 600,
   monsterImpactEffectDurationMs: 340,
   monsterAttackToDebuffDelayMs: 250,
   monsterDebuffRevealDurationMs: 450,
@@ -267,48 +268,74 @@ export const ANTI_DIZZINESS_MODE = Object.freeze({
   ON: 'ON'
 });
 
+function defineUpgradeCard({ id, name, description, icon, color, effect }) {
+  const frozenEffect = Object.freeze(effect);
+  return Object.freeze({
+    id,
+    name,
+    description: description(frozenEffect),
+    icon,
+    color,
+    effect: frozenEffect
+  });
+}
+
 export const UPGRADE_CARDS = Object.freeze([
-  Object.freeze({
+  defineUpgradeCard({
     id: 'base-attack',
     name: '基礎攻擊強化',
-    description: '基礎攻擊力 +' + GAME_CONFIG.upgradeBaseAttackBonus,
+    description: (effect) => '基礎攻擊力 +' + effect.perSelection,
     icon: '⚔',
-    accent: 'orange'
+    color: 'orange',
+    effect: { type: 'base-attack', perSelection: 10 }
   }),
-  Object.freeze({
+  defineUpgradeCard({
     id: 'rapid-tap-attack',
-    name: '連擊攻擊強化',
-    description: '每次連打傷害 +' + GAME_CONFIG.upgradeRapidTapDamageBonus.toFixed(1),
+    name: '連打傷害強化',
+    description: (effect) => '每次有效連打傷害 +' + effect.perSelection.toFixed(1),
     icon: 'ϟ',
-    accent: 'blue'
+    color: 'red',
+    effect: { type: 'rapid-tap-damage', perSelection: 0.6 }
   }),
-  Object.freeze({
+  defineUpgradeCard({
     id: 'rhythm-precision',
-    name: '節奏精準強化',
-    description: '節奏判定範圍 +' + Math.round(GAME_CONFIG.upgradeRhythmJudgmentBonus * 100) + '%',
+    name: '精準判定強化',
+    description: (effect) => 'HIT 判定範圍 +' + Math.round(effect.perSelection * 100) + '%',
     icon: '◎',
-    accent: 'lime'
+    color: 'cyan',
+    effect: { type: 'rhythm-precision', perSelection: 0.1 }
   }),
-  Object.freeze({
+  defineUpgradeCard({
     id: 'rapid-tap-duration',
-    name: '連打時間延長',
-    description: '連打時間 +' + Math.round(GAME_CONFIG.upgradeRapidTapDurationBonus * 100) + '%',
+    name: '極限連打',
+    description: (effect) => '每次選卡連打時間 +' + Math.round(effect.perSelection * 100) + '%',
     icon: 'ϟ',
-    accent: 'orange'
+    color: 'purple',
+    effect: { type: 'rapid-tap-duration', perSelection: 0.4 }
   }),
-  Object.freeze({
+  defineUpgradeCard({
     id: 'qte-duration',
-    name: 'QTE 時間延長',
-    description: '遭遇與補救 QTE +' + (GAME_CONFIG.upgradeQteDurationBonusMs / 1000).toFixed(1) + ' 秒',
+    name: '反應強化',
+    description: (effect) => 'QTE 時間 +' + (effect.perSelectionMs / 1000).toFixed(1) + ' 秒\n成功造成怪物最大 HP ' + Math.round(effect.successDamageRatioPerSelection * 100) + '% 傷害',
     icon: '◷',
-    accent: 'blue'
+    color: 'blue',
+    effect: { type: 'qte-duration', perSelectionMs: 300, successDamageRatioPerSelection: 0.03 }
   }),
-  Object.freeze({
+  defineUpgradeCard({
     id: 'max-speed',
-    name: '速度上限強化',
-    description: '攀登速度上限 +' + GAME_CONFIG.upgradeMaxClimbSpeedBonus.toFixed(2) + ' F/s',
+    name: '突破極限',
+    description: (effect) => '速度上限 +' + effect.maxSpeedPerSelection.toFixed(2) + ' F/s、當前速度 +' + effect.currentSpeedPerSelection.toFixed(2) + ' F/s',
     icon: '↑',
-    accent: 'lime'
+    color: 'green',
+    effect: { type: 'speed-breakthrough', maxSpeedPerSelection: 0.02, currentSpeedPerSelection: 0.01 }
+  }),
+  defineUpgradeCard({
+    id: 'energy-gain',
+    name: '能量增幅',
+    description: (effect) => '節奏球獲得的技能能量 +' + Math.round(effect.perSelection * 100) + '%',
+    icon: '✦',
+    color: 'yellow',
+    effect: { type: 'energy-gain', perSelection: 0.2 }
   })
 ]);
 

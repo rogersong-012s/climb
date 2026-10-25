@@ -15,6 +15,11 @@ function formatTime(milliseconds) {
     String(seconds).padStart(2, '0') + '.' + String(centiseconds).padStart(2, '0');
 }
 
+function formatCombatNumber(value) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? String(Number(numeric.toFixed(2))) : '0';
+}
+
 function escapeHtml(value) {
   return String(value).replace(/[&<>"']/g, (character) => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
@@ -1128,6 +1133,9 @@ export function createUI(onAction) {
   let lastDebuffCureSerial = 0;
   let lastCombatViewMode = null;
   let lastCombatMonsterId = null;
+  let resultTab = 'summary';
+  let latestState = null;
+  let lastRenderedMode = null;
 
   function antiDizzinessSetting(state) {
     const enabled = state.antiDizzinessMode === ANTI_DIZZINESS_MODE.ON;
@@ -1214,7 +1222,7 @@ export function createUI(onAction) {
           '<h2 id="modal-title">選擇一項強化</h2>' +
           '<p class="modal-lead">選擇後立即生效，並持續至本局結束</p>' +
           '<div class="upgrade-grid">' + cards.map((card) =>
-            '<button class="upgrade-card is-' + escapeHtml(card.accent) + '" type="button" data-upgrade-id="' + escapeHtml(card.id) + '">' +
+            '<button class="upgrade-card is-' + escapeHtml(card.color) + '" type="button" data-upgrade-id="' + escapeHtml(card.id) + '">' +
               '<span class="upgrade-card-icon" aria-hidden="true">' + escapeHtml(card.icon) + '</span>' +
               '<strong class="upgrade-card-name">' + escapeHtml(card.name) + '</strong>' +
               '<span class="upgrade-card-description">' + escapeHtml(card.description) + '</span>' +
@@ -1223,21 +1231,39 @@ export function createUI(onAction) {
           ).join('') + '</div>' +
         '</section>';
     } else if (mode === 'RESULT') {
+      const report = state.runReport;
       modalLayer.innerHTML =
         '<section class="modal-card result-card" role="dialog" aria-modal="true" aria-labelledby="modal-title">' +
           '<div class="confetti confetti-one"></div><div class="confetti confetti-two"></div>' +
           '<div class="modal-sticker trophy-sticker" aria-hidden="true">★</div>' +
           '<p class="modal-eyebrow">TOP FLOOR · MISSION COMPLETE</p><h2 id="modal-title">' + UI_TEXT.resultTitle + '</h2>' +
           '<p class="modal-lead">' + UI_TEXT.resultSubtitle + '</p>' +
-          '<div class="result-time"><span>' + UI_TEXT.timeLabel + '</span><strong>' + formatTime(state.timerMs) + '</strong></div>' +
-          '<div class="result-grid">' +
-            resultStat(UI_TEXT.comboLabel, state.stats.maxCombo) +
-            resultStat(UI_TEXT.hitsLabel, state.stats.hits) +
-            resultStat(UI_TEXT.missesLabel, state.stats.misses) +
-            resultStat(UI_TEXT.qteWinsLabel, state.stats.qteWins) +
-            resultStat(UI_TEXT.qteLossesLabel, state.stats.qteLosses) +
-            resultStat('本機最佳', state.bestTimeMs === null ? '—' : formatTime(state.bestTimeMs)) +
-          '</div>' +
+          (report ? '<div class="result-tabs" role="tablist" aria-label="戰報檢視方式">' +
+            '<button class="result-tab' + (resultTab === 'summary' ? ' is-active' : '') + '" type="button" role="tab" aria-selected="' + (resultTab === 'summary') + '" data-report-tab="summary">總覽</button>' +
+            '<button class="result-tab' + (resultTab === 'details' ? ' is-active' : '') + '" type="button" role="tab" aria-selected="' + (resultTab === 'details') + '" data-report-tab="details">詳細戰報</button>' +
+          '</div>' : '') +
+          (report && resultTab === 'details'
+            ? '<div class="result-detail-content" role="tabpanel" tabindex="0">' + resultDetailsMarkup(report) + '</div>'
+            : '<div class="result-summary-content" role="tabpanel">' +
+              '<div class="result-time"><span>' + UI_TEXT.timeLabel + '</span><strong>' + formatTime(state.timerMs) + '</strong></div>' +
+              '<div class="result-grid">' +
+                resultStat(UI_TEXT.comboLabel, state.stats.maxCombo) +
+                resultStat(UI_TEXT.hitsLabel, state.stats.hits) +
+                resultStat(UI_TEXT.missesLabel, state.stats.misses) +
+                resultStat(UI_TEXT.qteWinsLabel, state.stats.qteWins) +
+                resultStat(UI_TEXT.qteLossesLabel, state.stats.qteLosses) +
+                resultStat('擊敗怪物', report?.combat?.monstersDefeated ?? 0) +
+              '</div>' +
+              (report ? '<div class="result-highlight-row">' +
+                resultStat('總攀登距離', formatReportNumber(report.climbing.totalClimbedFloors, 2) + ' F') +
+                resultStat('節奏成功率', formatPercent(report.rhythm.overall.hitSuccessRate)) +
+                resultStat('技能取得 / 使用', report.energy.chargesEarned + ' / ' + report.energy.chargesUsed) +
+              '</div>' : '') +
+            '</div>') +
+          (report ? '<div class="result-report-actions">' +
+            '<button class="result-report-button" type="button" data-report-action="export">匯出 JSON 戰報</button>' +
+            '<button class="result-report-button is-secondary" type="button" data-report-action="copy">複製 JSON</button>' +
+          '</div><p class="result-report-feedback" data-report-feedback aria-live="polite"></p>' : '') +
           '<button class="primary-button" type="button" data-action="start">' + UI_TEXT.retryButton + '<span>↻</span></button>' +
         '</section>';
     }
@@ -1245,6 +1271,219 @@ export function createUI(onAction) {
 
   function resultStat(label, value) {
     return '<div class="result-stat"><span>' + escapeHtml(label) + '</span><strong>' + escapeHtml(value) + '</strong></div>';
+  }
+
+  function formatReportNumber(value, digits = 2) {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? numeric.toLocaleString('zh-Hant', { maximumFractionDigits: digits }) : '0';
+  }
+
+  function formatReportSeconds(value) {
+    return formatReportNumber(value, 2) + ' 秒';
+  }
+
+  function formatPercent(value) {
+    return formatReportNumber((Number(value) || 0) * 100, 1) + '%';
+  }
+
+  function resultDetailSection(title, rows, className = '') {
+    const content = rows.length
+      ? rows.map(([label, value]) => '<div class="result-detail-row"><span>' + escapeHtml(label) + '</span><strong>' + escapeHtml(value) + '</strong></div>').join('')
+      : '<p class="result-detail-empty">本局沒有紀錄</p>';
+    return '<section class="result-detail-section ' + className + '"><h3>' + escapeHtml(title) + '</h3><div class="result-detail-rows">' + content + '</div></section>';
+  }
+
+  function resultDetailsMarkup(report) {
+    const timing = report.timing ?? {};
+    const climbing = report.climbing ?? {};
+    const combat = report.combat ?? {};
+    const qte = report.qte ?? {};
+    const rhythm = report.rhythm ?? {};
+    const energy = report.energy ?? {};
+    const formatUpgradeSnapshot = (snapshot) => Object.entries(snapshot ?? {})
+      .map(([key, value]) => key + ': ' + formatReportNumber(value, 3))
+      .join(' · ') || '—';
+    const timingRows = [
+      ['戰報格式 / 模式', 'v' + (report.schemaVersion ?? '1.0') + ' · ' + (report.run?.mode === 'debug' ? 'DEBUG' : '一般遊玩')],
+      ['結算 / 樓層', (report.run?.result ?? '—') + ' · ' + report.run?.startFloor + 'F → ' + report.run?.finalFloor + 'F'],
+      ['官方遊戲時間', formatReportSeconds(timing.gameTimeSeconds)],
+      ['一般攀登', formatReportSeconds(timing.normalClimbingSeconds)],
+      ['遭遇 QTE', formatReportSeconds(timing.encounterQteSeconds)],
+      ['戰鬥', formatReportSeconds(timing.combatSeconds)],
+      ['防禦補救 QTE', formatReportSeconds(timing.emergencyQteSeconds)],
+      ['動畫與轉場', formatReportSeconds(timing.animationTransitionSeconds)],
+      ['其他遊戲事件', formatReportSeconds(timing.otherEventSeconds)],
+      ['強化選卡（另計）', formatReportSeconds(timing.upgradeSelectionSeconds)],
+      ['實際經過時間', formatReportSeconds(timing.realElapsedSeconds)],
+      ['未分類差額', formatReportSeconds(timing.unclassifiedSeconds)]
+    ];
+    const climbingRows = [
+      ['累計正向攀登（含重爬）', formatReportNumber(climbing.totalClimbedFloors, 2) + ' F'],
+      ['QTE 擊退距離', formatReportNumber(climbing.knockedBackFloors, 2) + ' F'],
+      ['時間加權基礎速度', formatReportNumber(climbing.averageBaseSpeedFloorsPerSecond, 3) + ' F/s'],
+      ['平均有效速度', formatReportNumber(climbing.averageEffectiveSpeedFloorsPerSecond, 3) + ' F/s'],
+      ['最高有效速度', formatReportNumber(climbing.maxEffectiveSpeedFloorsPerSecond, 3) + ' F/s'],
+      ['完美節奏衝刺累計', formatReportSeconds(climbing.temporaryBurstSeconds) + ' · 額外攀登 ' + formatReportNumber(climbing.temporaryBurstDistanceFloors, 3) + ' F'],
+      ['疼痛 DEBUFF 影響攀登', formatReportSeconds(climbing.painDebuffAffectedSeconds) + ' · ' + formatReportNumber(climbing.painDebuffAffectedDistanceFloors, 3) + ' F'],
+      ['最終基礎速度 / 有效速度', formatReportNumber(climbing.finalBaseSpeedFloorsPerSecond, 3) + ' / ' + formatReportNumber(climbing.finalEffectiveSpeedFloorsPerSecond, 3) + ' F/s'],
+      ['最終速度上限', formatReportNumber(climbing.finalSpeedCapFloorsPerSecond, 3) + ' F/s'],
+      ['含負面狀態的平均上限', formatReportNumber(climbing.averageEffectiveSpeedCapFloorsPerSecond, 3) + ' F/s'],
+      ['基礎速度達上限時間', formatReportSeconds(climbing.timeAtSpeedCapSeconds) + '（' + formatPercent(climbing.timeAtSpeedCapRatio) + '）'],
+      ['高於未強化速度上限時間', formatReportSeconds(climbing.timeAboveNoSpeedUpgradeCapSeconds)],
+      ['速度上限強化次數', String(climbing.speedCapUpgradeCount ?? 0)]
+    ];
+    const speedUpgradeRows = (climbing.speedCapUpgradeHistory ?? []).map((upgrade, index) => [
+      '第 ' + (index + 1) + ' 次 · Lv.' + upgrade.level,
+      upgrade.floor + 'F · ' + formatReportSeconds(upgrade.gameTimeSeconds) + ' · 強化後上限 ' + formatReportNumber(upgrade.speedCapFloorsPerSecond, 3) + ' F/s'
+    ]);
+    const intervalRows = (climbing.floorIntervals ?? []).map((interval) =>
+      [interval.fromFloor + 'F–' + interval.toFloor + 'F', formatReportNumber(interval.climbedFloors, 2) + ' F / ' + formatReportSeconds(interval.climbingSeconds) + ' / ' + formatReportNumber(interval.averageEffectiveSpeedFloorsPerSecond, 3) + ' F/s']
+    );
+    const combatRows = [
+      ['擊敗 / 跳過怪物', (combat.monstersDefeated ?? 0) + ' / ' + (combat.monstersSkipped ?? 0)],
+      ['遭遇嘗試', String(combat.encounterAttempts ?? 0)],
+      ['攻擊回合', String(combat.totalAttackRounds ?? 0)],
+      ['一回合擊敗', String(combat.oneRoundKills ?? 0)],
+      ['兩回合擊敗', String(combat.twoRoundKills ?? 0)],
+      ['三回合以上擊敗', String(combat.threeOrMoreRoundKills ?? 0)],
+      ['QTE 直接擊敗', String(combat.qteOnlyKills ?? 0)],
+      ['計算傷害 / 實際扣血', formatReportNumber(combat.calculatedDamage, 2) + ' / ' + formatReportNumber(combat.actualDamage, 2)],
+      ['基礎攻擊傷害', formatReportNumber(combat.baseAttackDamage, 2)],
+      ['連打傷害', formatReportNumber(combat.rapidTapDamage, 2)],
+      ['節奏顏色加成傷害', formatReportNumber(combat.colorMultiplierBonusDamage, 2)],
+      ['QTE 強化傷害', formatReportNumber(combat.qteDamage, 2)],
+      ['每隻擊敗怪物平均戰鬥時間', formatReportSeconds(combat.averageBattleSecondsPerDefeatedMonster)]
+    ];
+    const qteRows = [
+      ['一般遭遇 QTE', (qte.encounterSuccesses ?? 0) + ' 成功 / ' + (qte.encounterFailures ?? 0) + ' 失敗（' + formatPercent(qte.encounterSuccessRate) + '）'],
+      ['防禦補救 QTE', (qte.emergencySuccesses ?? 0) + ' 成功 / ' + (qte.emergencyFailures ?? 0) + ' 失敗（' + formatPercent(qte.emergencySuccessRate) + '）'],
+      ['被踢退樓次數', String(qte.knockbackCount ?? 0)],
+      ['反應強化取得次數', String(qte.qteTimeUpgradeCount ?? 0)],
+      ['最大失敗補償時間', formatReportSeconds(qte.maxFailureCompensationSeconds)],
+      ['QTE 傷害', formatReportNumber(qte.qteDamage, 2)]
+    ];
+    const energyRows = [
+      ['基礎能量', formatReportNumber(energy.baseEnergy, 2)],
+      ['COMBO 額外能量', formatReportNumber(energy.comboBonusEnergy, 2)],
+      ['能量增幅卡額外能量', formatReportNumber(energy.upgradeBonusEnergy, 2)],
+      ['所有合資格 HIT 能量', formatReportNumber(energy.totalEligibleEnergy, 2)],
+      ['滿技能上限時阻擋能量', formatReportNumber(energy.energyBlockedAtMaxCharges, 2)],
+      ['技能充滿 / 使用', (energy.chargesEarned ?? 0) + ' / ' + (energy.chargesUsed ?? 0)],
+      ['成功跳過怪物', String(energy.successfulMonsterSkips ?? 0)],
+      ['剩餘技能 / 能量', (energy.remainingCharges ?? 0) + ' / ' + formatReportNumber(energy.remainingEnergy, 2)]
+    ];
+    const rhythmRows = [
+      ['整體球數 / 完美球', (rhythm.overall?.ballsSpawned ?? 0) + ' / ' + (rhythm.overall?.perfectBalls ?? 0)],
+      ['可操作球 / 完美球', (rhythm.overall?.eligibleBalls ?? 0) + ' / ' + (rhythm.overall?.perfectBalls ?? 0)],
+      ['低血糖停用球 / 拍點', (rhythm.overall?.disabledBalls ?? 0) + ' / ' + (rhythm.overall?.disabledTargets ?? 0)],
+      ['成功 HIT / 漏拍', (rhythm.overall?.targetsHit ?? 0) + ' / ' + (rhythm.overall?.targetsMissed ?? 0)],
+      ['整體 HIT 成功率', formatPercent(rhythm.overall?.hitSuccessRate)],
+      ['完美球率', formatPercent(rhythm.overall?.perfectBallRate)],
+      ['錯誤按鍵', String(rhythm.overall?.incorrectPresses ?? 0)],
+      ['最高 COMBO', String(rhythm.maxCombo ?? report.stats?.maxCombo ?? 0)]
+    ];
+    const purposeNames = { climbing: '一般攀登', combatAttack: '戰鬥攻擊' };
+    for (const [purpose, colors] of Object.entries(rhythm.byPurpose ?? {})) {
+      for (const [typeId, color] of Object.entries(colors)) {
+        rhythmRows.push([
+          purposeNames[purpose] + ' · ' + (RHYTHM_TYPES[typeId]?.label ?? typeId),
+          '球 ' + color.ballsSpawned + '，HIT ' + color.targetsHit + '，漏拍 ' + color.targetsMissed +
+            '，完美 ' + color.perfectBalls + '/' + color.eligibleBalls + '（' + formatPercent(color.hitSuccessRate) + '）' +
+            (color.disabledBalls ? '，低血糖停用 ' + color.disabledBalls + ' 球' : '')
+        ]);
+      }
+    }
+    const upgradeName = (id) => UPGRADE_CARDS.find((card) => card.id === id)?.name ?? id;
+    const upgradeRows = Object.entries(report.upgrades?.counts ?? {}).map(([id, count]) => [upgradeName(id), String(count) + ' 次']);
+    const upgradeHistoryRows = (report.upgrades?.history ?? []).map((upgrade, index) => [
+      '第 ' + (index + 1) + ' 次 · ' + upgradeName(upgrade.upgradeId),
+      upgrade.floor + 'F · ' + formatReportSeconds(upgrade.gameTimeSeconds) + ' · Lv.' + upgrade.level +
+        ' · 前：' + formatUpgradeSnapshot(upgrade.valuesBefore) + ' · 後：' + formatUpgradeSnapshot(upgrade.valuesAfter)
+    ]);
+    const monsterRows = (report.monsterRecords ?? []).map((monster) => {
+      const name = monster.monsterName ?? (monster.result === 'skipped' ? '跳過（未遭遇，種類未抽選）' : '未知怪物');
+      const resultName = { defeated: '擊敗', skipped: '跳過', pending: '未完成' }[monster.result] ?? monster.result;
+      return [
+        '#' + (monster.monsterOrdinal ?? '—') + ' ' + name + ' · ' + monster.floor + 'F',
+        resultName + ' · 遭遇 ' + monster.encounterAttempts + ' 次' +
+          ((monster.encounterHistory?.length ?? 0) > 1 ? '（重遇樓層：' + monster.encounterHistory.slice(1).map((attempt) => attempt.floor + 'F').join('、') + '）' : '') +
+          ' · 攻擊 ' + monster.attackRounds + ' 回合 · 實扣 ' + formatReportNumber(monster.totalDamage, 2) + ' · QTE 傷害 ' + formatReportNumber(monster.qteDamage, 2)
+      ];
+    });
+    const splitRows = (report.floorSplits ?? []).map((split) => [
+      split.toFloor + 'F 首次抵達',
+      '區間 ' + formatReportSeconds(split.elapsedGameTimeSeconds) + ' · 累計 ' + formatReportSeconds(split.firstReachedGameTimeSeconds)
+    ]);
+    return [
+      resultDetailSection('時間分布', timingRows),
+      resultDetailSection('攀登與速度', climbingRows),
+      resultDetailSection('速度上限強化歷程', speedUpgradeRows),
+      resultDetailSection('分段平均速度', intervalRows),
+      resultDetailSection('怪物與戰鬥', combatRows),
+      resultDetailSection('怪物遭遇紀錄', monsterRows),
+      resultDetailSection('QTE', qteRows),
+      resultDetailSection('節奏球與技能充能', rhythmRows.concat(energyRows)),
+      resultDetailSection('強化卡取得次數', upgradeRows),
+      resultDetailSection('強化卡歷程（含前後數值）', upgradeHistoryRows),
+      resultDetailSection('樓層分段（首次抵達）', splitRows)
+    ].join('');
+  }
+
+  function reportFilename(report) {
+    const date = new Date(report?.run?.finishedAt ?? Date.now());
+    const pad = (value) => String(value).padStart(2, '0');
+    return 'dengfeng-run-' + date.getFullYear() + pad(date.getMonth() + 1) + pad(date.getDate()) + '-' +
+      pad(date.getHours()) + pad(date.getMinutes()) + pad(date.getSeconds()) + '.json';
+  }
+
+  async function exportRunReport(report) {
+    if (!report || typeof document === 'undefined') return '目前沒有可匯出的戰報';
+    const json = JSON.stringify(report, null, 2);
+    const filename = reportFilename(report);
+    try {
+      const file = new File([json], filename, { type: 'application/json;charset=utf-8' });
+      if (navigator.share && navigator.canShare?.({ files: [file] })) {
+        await navigator.share({ title: '登峰灶急戰報', files: [file] });
+        return '已開啟分享選單';
+      }
+    } catch (error) {
+      if (error?.name === 'AbortError') return '已取消分享';
+    }
+    const blob = new Blob([json], { type: 'application/json;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = filename;
+    anchor.rel = 'noopener';
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    return '戰報已開始下載';
+  }
+
+  async function copyRunReport(report) {
+    if (!report || typeof document === 'undefined') return '目前沒有可複製的戰報';
+    const json = JSON.stringify(report, null, 2);
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(json);
+        return 'JSON 戰報已複製';
+      }
+    } catch { /* Fall through to the legacy selection copy for Safari and embedded browsers. */ }
+    const textarea = document.createElement('textarea');
+    textarea.value = json;
+    textarea.setAttribute('readonly', '');
+    textarea.style.position = 'fixed';
+    textarea.style.opacity = '0';
+    document.body.appendChild(textarea);
+    textarea.select();
+    let copied = false;
+    try { copied = document.execCommand('copy'); } catch { copied = false; }
+    textarea.remove();
+    if (copied) return 'JSON 戰報已複製';
+    globalThis.prompt?.('複製下方 JSON 戰報：', json);
+    return '已開啟複製備援';
   }
 
   function viewNodeProgress(state, viewMode) {
@@ -1378,10 +1617,12 @@ export function createUI(onAction) {
   function monsterVitalsMarkup(monster, hp, maxHp) {
     const safeMaxHp = Math.max(1, Number(maxHp) || GAME_CONFIG.monsterBaseHp);
     const safeHp = Math.max(0, Math.min(safeMaxHp, Number(hp) || 0));
-    return '<div class="monster-vitals" aria-label="' + escapeHtml(monster.name) + ' HP ' + safeHp + ' / ' + safeMaxHp + '">' +
+    const displayedHp = formatCombatNumber(safeHp);
+    const displayedMaxHp = formatCombatNumber(safeMaxHp);
+    return '<div class="monster-vitals" aria-label="' + escapeHtml(monster.name) + ' HP ' + displayedHp + ' / ' + displayedMaxHp + '">' +
       '<strong class="monster-vitals-name">' + escapeHtml(monster.name) + '</strong>' +
       '<span class="monster-hp-track"><span class="monster-hp-fill" style="width:' + ((safeHp / safeMaxHp) * 100) + '%"></span></span>' +
-      '<span class="monster-hp-value">' + safeHp + '/' + safeMaxHp + '</span>' +
+      '<span class="monster-hp-value">' + displayedHp + '/' + displayedMaxHp + '</span>' +
     '</div>';
   }
 
@@ -1478,7 +1719,7 @@ export function createUI(onAction) {
       phaseMarkup = '<span class="player-attack-projectile" aria-hidden="true"></span>';
     } else if (mode === 'COMBAT_ATTACK_SETTLE') {
       phaseMarkup = '<span class="player-attack-projectile is-firing" aria-hidden="true"></span>' +
-        '<p class="combat-feedback combat-damage-label">DMG ' + Math.max(0, Number(state.combatPendingDamage) || 0) + '</p>';
+        '<p class="combat-feedback combat-damage-label">DMG ' + formatCombatNumber(Math.max(0, Number(state.combatPendingDamage) || 0)) + '</p>';
     } else if (mode === 'COMBAT_DEFENSE_INTRO') {
       phaseMarkup = '<p class="combat-round-prompt is-defense">' + escapeHtml(UI_TEXT.combatDefenseRound) + '</p>' +
         buildCombatDefenseMarkup(state.combatDefenseRound, { shieldVisible: false, showVortex: true });
@@ -1642,8 +1883,10 @@ export function createUI(onAction) {
     const maxHp = Math.max(1, state.monsterMaxHp ?? GAME_CONFIG.monsterBaseHp);
     const hp = Math.max(0, Math.min(maxHp, state.monsterHp ?? maxHp));
     fill.style.width = ((hp / maxHp) * 100) + '%';
-    value.textContent = hp + '/' + maxHp;
-    vitals.setAttribute('aria-label', state.activeMonster.name + ' HP ' + hp + ' / ' + maxHp);
+    const displayedHp = formatCombatNumber(hp);
+    const displayedMaxHp = formatCombatNumber(maxHp);
+    value.textContent = displayedHp + '/' + displayedMaxHp;
+    vitals.setAttribute('aria-label', state.activeMonster.name + ' HP ' + displayedHp + ' / ' + displayedMaxHp);
   }
 
   function buildMonsterEntrance(monster, elapsedMs = 0, hp = GAME_CONFIG.monsterBaseHp, maxHp = GAME_CONFIG.monsterBaseHp) {
@@ -2019,6 +2262,9 @@ export function createUI(onAction) {
   }
 
   function render(state, game) {
+    latestState = state;
+    if (state.mode === 'RESULT' && lastRenderedMode !== 'RESULT') resultTab = 'summary';
+    lastRenderedMode = state.mode;
     gameRoot.dataset.debuff = Object.keys(state.debuffs ?? {}).join(' ') || 'NONE';
     const activeMode = state.mode === 'PAUSED' ? state.resumeMode : state.mode;
     const isEventWarning = activeMode === 'EVENT_WARNING';
@@ -2373,6 +2619,28 @@ export function createUI(onAction) {
   }
 
   modalLayer.addEventListener('click', (event) => {
+    const reportTab = event.target.closest('[data-report-tab]')?.dataset.reportTab;
+    if (reportTab && latestState?.runReport) {
+      resultTab = reportTab;
+      lastMode = null;
+      showModal(latestState);
+      return;
+    }
+    const reportAction = event.target.closest('[data-report-action]')?.dataset.reportAction;
+    if (reportAction && latestState?.runReport) {
+      const feedback = modalLayer.querySelector('[data-report-feedback]');
+      const operation = reportAction === 'copy'
+        ? copyRunReport(latestState.runReport)
+        : exportRunReport(latestState.runReport);
+      Promise.resolve(operation).then((message) => {
+        if (feedback?.isConnected) feedback.textContent = message;
+      }).catch(() => {
+        if (feedback?.isConnected) feedback.textContent = reportAction === 'copy'
+          ? '複製未成功，請改用匯出或再次嘗試'
+          : '匯出未成功，請改用複製 JSON';
+      });
+      return;
+    }
     const setting = event.target.closest('[data-setting]');
     if (setting?.dataset.setting === 'anti-dizziness') {
       onAction('set-anti-dizziness-mode', setting.getAttribute('aria-checked') !== 'true');

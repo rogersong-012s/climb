@@ -8,6 +8,7 @@ const debug = createDebugController();
 const rhythmAudio = createRhythmAudio();
 const game = createGame({
   debugHooks: debug.enabled ? debug.hooks : null,
+  runMode: debug.enabled ? 'debug' : 'manual',
   getBgmClock: rhythmAudio.getBgmClock
 });
 let lastRhythmFeedbackSerial = null;

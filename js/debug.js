@@ -80,8 +80,7 @@ function makeStats() {
     stages,
     completedRoundIds: new Set(),
     resolvedRoundIds: new Set(),
-    defeatedEventIds: new Set(),
-    chosenUpgradeIds: new Set()
+    defeatedEventIds: new Set()
   };
 }
 
@@ -283,9 +282,19 @@ export function createDebugController() {
       stats.monstersDefeated += 1;
     },
     onUpgradeChosen(details) {
-      if (stats.chosenUpgradeIds.has(details.cardId)) return;
-      stats.chosenUpgradeIds.add(details.cardId);
       if (details.cardId in stats.upgrades) stats.upgrades[details.cardId] += 1;
+    },
+    onCombatAttackDamageCalculated(details) {
+      const precise = (value) => Number((Number(value) || 0).toFixed(3));
+      console.info('[DEBUG MODE] 戰鬥攻擊傷害', {
+        '攻擊球': RHYTHM_TYPES[details.typeId]?.label ?? details.typeId ?? '未知',
+        '成功拍點': details.successCount + '/' + details.totalCount,
+        '基礎傷害': precise(details.baseDamage),
+        '連打傷害': precise(details.rapidTapDamage),
+        '倍率前傷害': precise(details.rawDamage),
+        '顏色倍率': precise(details.colorMultiplier),
+        '最終傷害': precise(details.finalDamage)
+      });
     }
   });
 

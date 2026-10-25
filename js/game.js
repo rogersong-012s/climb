@@ -7,6 +7,7 @@ import { chooseMonster } from './monsters.js';
 import { clickQteTile, createQte, QTE_CONTEXT } from './qte.js';
 import { createRhythmRound, currentRhythmWindow, isCurrentRhythmHit, rhythmHitWindows, rhythmRoundDurationMs, rhythmRoundProgress, rhythmWindowForIndex, RHYTHM_PHASE } from './rhythm.js';
 import { stairNodeAt } from './stairs.js';
+import { createRunStatistics } from './run-stats.js';
 
 const MONSTER_EVENT_PHASES = new Set([
   'EVENT_WARNING', 'MONSTER_ENTRANCE', 'MONSTER_CAST', 'MONSTER_IMPACT',
@@ -45,17 +46,12 @@ function freshState(bestTimeMs = null, antiDizzinessMode = ANTI_DIZZINESS_MODE.O
     monsterHp: null,
     monsterMaxHp: null,
     upgradeChoices: [],
-    runUpgrades: {
-      baseAttackDamage: GAME_CONFIG.combatBaseAttackDamage,
-      rapidTapDamage: GAME_CONFIG.combatRapidTapDamageMultiplier,
-      rhythmJudgmentLevel: 0,
-      rapidTapDurationLevel: 0,
-      qteDurationLevel: 0,
-      maxClimbSpeedLevel: 0
-    },
+    runUpgrades: Object.fromEntries(UPGRADE_CARDS.map((card) => [card.id, 0])),
     combatDefenseRound: null,
     combatRapidTap: null,
     combatPendingDamage: 0,
+    combatPendingDamageBreakdown: null,
+    combatAttackDamageContext: null,
     combatDefenseImpactSerial: 0,
     preparedQte: null,
     monsterDebuffApplied: false,
@@ -93,6 +89,7 @@ function freshState(bestTimeMs = null, antiDizzinessMode = ANTI_DIZZINESS_MODE.O
     monsterEvents: [],
     activeQte: null,
     qteItemUse: null,
+    runReport: null,
     debuffs: {},
     heartPalpitationsUntilWobbleMs: null,
     heartPalpitationsWobbleRemainingMs: 0,
@@ -189,7 +186,9 @@ function readAntiDizzinessMode(storage) {
 export function createGame(options = {}) {
   const random = options.random ?? Math.random;
   const debugHooks = options.debugHooks ?? null;
+  const runMode = options.runMode === 'debug' ? 'debug' : 'manual';
   const getBgmClock = typeof options.getBgmClock === 'function' ? options.getBgmClock : null;
+  const wallClockNow = typeof options.wallClockNow === 'function' ? options.wallClockNow : () => Date.now();
   let storage = options.storage;
   if (storage === undefined) {
     try { storage = globalThis.localStorage; } catch { storage = null; }
@@ -200,6 +199,8 @@ export function createGame(options = {}) {
   let rhythmFeedbackSerial = 0;
   let rhythmLaunchSerial = 0;
   let lastRhythmInputTimerMs = -Infinity;
+  let runStatistics = null;
+  let upgradeSelectionStartedAtMs = null;
   const listeners = new Set();
 
   function notify() {
@@ -216,6 +217,103 @@ export function createGame(options = {}) {
       // Debug instrumentation must never interrupt the real game loop.
       console.error('[DEBUG MODE] instrumentation error:', error);
     }
+  }
+
+  function upgradeCard(cardId) {
+    return UPGRADE_CARDS.find((card) => card.id === cardId) ?? null;
+  }
+
+  function upgradeCount(cardId) {
+    return Math.max(0, Number(state.runUpgrades?.[cardId]) || 0);
+  }
+
+  function upgradeEffectAmount(cardId, property = 'perSelection') {
+    const amount = Number(upgradeCard(cardId)?.effect?.[property]);
+    return Number.isFinite(amount) ? amount : 0;
+  }
+
+  function baseAttackDamageForRun() {
+    return GAME_CONFIG.combatBaseAttackDamage +
+      upgradeCount('base-attack') * upgradeEffectAmount('base-attack');
+  }
+
+  function rapidTapDamageForRun() {
+    return GAME_CONFIG.combatRapidTapDamage +
+      upgradeCount('rapid-tap-attack') * upgradeEffectAmount('rapid-tap-attack');
+  }
+
+  function formatDamage(value) {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? String(Number(numeric.toFixed(2))) : '0';
+  }
+
+  function reportCombatAttackDamage(context, rapidTapDamage = 0) {
+    const rawDamage = context.baseDamage + rapidTapDamage;
+    const finalDamage = rawDamage * context.colorMultiplier;
+    notifyDebug('onCombatAttackDamageCalculated', {
+      typeId: context.typeId,
+      baseDamage: context.baseDamage,
+      rapidTapDamage,
+      rawDamage,
+      colorMultiplier: context.colorMultiplier,
+      finalDamage,
+      successCount: context.successCount,
+      totalCount: context.totalCount
+    });
+    return finalDamage;
+  }
+
+  function upgradeValueSnapshot() {
+    const qteUpgradeCount = upgradeCount('qte-duration');
+    const speedUpgrade = upgradeCard('max-speed')?.effect ?? {};
+    return {
+      baseAttackDamage: baseAttackDamageForRun(),
+      rapidTapDamagePerTap: rapidTapDamageForRun(),
+      rhythmJudgmentMultiplier: 1 + upgradeCount('rhythm-precision') * upgradeEffectAmount('rhythm-precision'),
+      rapidTapDurationMultiplier: 1 + upgradeCount('rapid-tap-duration') * upgradeEffectAmount('rapid-tap-duration'),
+      qteDurationSeconds: (GAME_CONFIG.monsterQteDurationMs + qteUpgradeCount * upgradeEffectAmount('qte-duration', 'perSelectionMs')) / 1000,
+      qteSuccessDamageRatio: qteUpgradeCount * upgradeEffectAmount('qte-duration', 'successDamageRatioPerSelection'),
+      speedFloorsPerSecond: state.climbSpeed,
+      speedCapFloorsPerSecond: state.maxClimbSpeed,
+      speedCapBonusPerSelection: Number(speedUpgrade.maxSpeedPerSelection) || 0,
+      energyGainMultiplier: 1 + upgradeCount('energy-gain') * upgradeEffectAmount('energy-gain')
+    };
+  }
+
+  function timeCategoryForCurrentMode() {
+    if (state.mode === 'CLIMBING') {
+      return state.isLandingPaused || state.isTurning ? 'animationTransitionMs' : 'normalClimbingMs';
+    }
+    if (state.mode === 'MONSTER_QTE') {
+      return state.activeQte?.context === QTE_CONTEXT.DEFENSE_RECOVERY
+        ? 'emergencyQteMs'
+        : 'encounterQteMs';
+    }
+    if (COMBAT_MODES.has(state.mode)) return 'combatMs';
+    if (MONSTER_EVENT_PHASES.has(state.mode)) return 'animationTransitionMs';
+    return 'otherEventMs';
+  }
+
+  function advanceOfficialTime(deltaMs) {
+    const elapsedMs = Math.max(0, Number(deltaMs) || 0);
+    if (elapsedMs <= 0) return;
+    state.timerMs += elapsedMs;
+    runStatistics?.recordTime(timeCategoryForCurrentMode(), elapsedMs);
+  }
+
+  function applyQteSuccessDamage(event = state.activeMonsterEvent) {
+    const upgradeCountForQte = upgradeCount('qte-duration');
+    const damageRatio = upgradeCountForQte * upgradeEffectAmount('qte-duration', 'successDamageRatioPerSelection');
+    if (!state.activeMonster || !state.monsterMaxHp || damageRatio <= 0) return 0;
+    const calculatedDamage = state.monsterMaxHp * damageRatio;
+    const actualDamage = Math.min(Math.max(0, state.monsterHp ?? 0), calculatedDamage);
+    state.monsterHp = Math.max(0, (state.monsterHp ?? 0) - actualDamage);
+    if (state.activeQte) {
+      state.activeQte.monsterHp = state.monsterHp;
+      state.activeQte.monsterMaxHp = state.monsterMaxHp;
+    }
+    runStatistics?.recordQteDamage(event, calculatedDamage, actualDamage);
+    return actualDamage;
   }
 
   function rhythmDebugData(round, mode = state.mode) {
@@ -312,7 +410,7 @@ export function createGame(options = {}) {
   }
 
   function chargeSkipSkillForHit(round) {
-    if (state.mode !== 'CLIMBING' || state.skipSkillCharges >= GAME_CONFIG.skipSkillMaxCharges) return 0;
+    if (state.mode !== 'CLIMBING') return 0;
     const totalTargets = round?.hitBeats?.length ?? 0;
     const rhythmEnergy = GAME_CONFIG.skipSkillRhythmEnergy[round?.typeId] ?? 0;
     if (totalTargets <= 0 || rhythmEnergy <= 0) return 0;
@@ -323,12 +421,28 @@ export function createGame(options = {}) {
     );
     const comboEnergyMultiplier = 1 +
       comboForEnergyBonus * GAME_CONFIG.skipSkillComboEnergyBonusPerCombo;
-    const energyGain = (rhythmEnergy / totalTargets) * comboEnergyMultiplier;
+    const energyUpgradeMultiplier = 1 +
+      upgradeCount('energy-gain') * upgradeEffectAmount('energy-gain');
+    const baseEnergy = rhythmEnergy / totalTargets;
+    const comboBonusEnergy = baseEnergy * (comboEnergyMultiplier - 1);
+    const upgradeBonusEnergy = baseEnergy * comboEnergyMultiplier * (energyUpgradeMultiplier - 1);
+    const energyGain = baseEnergy + comboBonusEnergy + upgradeBonusEnergy;
+    if (state.skipSkillCharges >= GAME_CONFIG.skipSkillMaxCharges) {
+      runStatistics?.recordEnergyGain({
+        baseEnergy,
+        comboBonusEnergy,
+        upgradeBonusEnergy,
+        eligibleEnergy: energyGain,
+        blockedEnergy: energyGain
+      });
+      return 0;
+    }
     state.skipSkillEnergy += energyGain;
     while (state.skipSkillEnergy + 1e-8 >= GAME_CONFIG.skipSkillEnergyRequired &&
         state.skipSkillCharges < GAME_CONFIG.skipSkillMaxCharges) {
       state.skipSkillEnergy -= GAME_CONFIG.skipSkillEnergyRequired;
       state.skipSkillCharges += 1;
+      runStatistics?.recordChargeEarned();
       notifyDebug('onSkillChargeEarned', {
         charges: state.skipSkillCharges,
         energy: state.skipSkillEnergy,
@@ -336,7 +450,18 @@ export function createGame(options = {}) {
         timerMs: state.timerMs
       });
     }
-    if (state.skipSkillCharges >= GAME_CONFIG.skipSkillMaxCharges) state.skipSkillEnergy = 0;
+    let blockedEnergy = 0;
+    if (state.skipSkillCharges >= GAME_CONFIG.skipSkillMaxCharges) {
+      blockedEnergy = state.skipSkillEnergy;
+      state.skipSkillEnergy = 0;
+    }
+    runStatistics?.recordEnergyGain({
+      baseEnergy,
+      comboBonusEnergy,
+      upgradeBonusEnergy,
+      eligibleEnergy: energyGain,
+      blockedEnergy
+    });
     return energyGain;
   }
 
@@ -346,7 +471,7 @@ export function createGame(options = {}) {
 
   function currentHitZoneWidth() {
     const effectiveMode = state.mode === 'PAUSED' ? state.resumeMode : state.mode;
-    const judgmentMultiplier = 1 + state.runUpgrades.rhythmJudgmentLevel * GAME_CONFIG.upgradeRhythmJudgmentBonus;
+    const judgmentMultiplier = 1 + upgradeCount('rhythm-precision') * upgradeEffectAmount('rhythm-precision');
     if (effectiveMode === 'COMBAT_ATTACK') return hitZoneWidthForCombo(0, null, judgmentMultiplier);
     return hitZoneWidthForCombo(state.combo, null, judgmentMultiplier);
   }
@@ -372,7 +497,7 @@ export function createGame(options = {}) {
   }
 
   function qteDurationForContext(context) {
-    const upgradeBonusMs = state.runUpgrades.qteDurationLevel * GAME_CONFIG.upgradeQteDurationBonusMs;
+    const upgradeBonusMs = upgradeCount('qte-duration') * upgradeEffectAmount('qte-duration', 'perSelectionMs');
     const failureBonusMs = context === QTE_CONTEXT.ENCOUNTER
       ? state.encounterQteFailureCount * GAME_CONFIG.monsterQteFailureCompensationMs
       : 0;
@@ -478,6 +603,7 @@ export function createGame(options = {}) {
     }
     round.bgmSpawnAlignment = spawnAlignment;
     state.rhythmRound = round;
+    runStatistics?.recordRhythmSpawn(round.id, round.typeId, state.mode);
     notifyDebug('onRhythmRoundCreated', {
       ...rhythmDebugData(state.rhythmRound),
       bgmSpawnAlignment: spawnAlignment
@@ -553,6 +679,7 @@ export function createGame(options = {}) {
         ? GAME_CONFIG.obesityClimbRewardMultiplier
         : 1;
       applyHit(state, rewardMultiplier);
+      runStatistics?.recordMaxCombo(state.combo);
       if (state.mode === 'CLIMBING') {
         triggerPerfectClimbSpeedBurst(rewardMultiplier);
         updateSkipSkillWindow();
@@ -586,6 +713,7 @@ export function createGame(options = {}) {
         round.resolvedHits[targetIndex] !== null) return false;
     round.resolvedHits[targetIndex] = 'success';
     round.successCount = round.resolvedHits.filter((result) => result === 'success').length;
+    runStatistics?.recordRhythmTarget(round.id, round.typeId, state.mode, targetIndex, true);
     const energyGain = chargeSkipSkillForHit(round);
     notifyDebug('onRhythmTargetResolved', {
       ...rhythmDebugData(round),
@@ -607,6 +735,7 @@ export function createGame(options = {}) {
     if (!round || round.phase !== RHYTHM_PHASE.MOVING || round.resolvedHits[targetIndex] !== null) return false;
     round.resolvedHits[targetIndex] = 'missed';
     round.missedCount = (round.missedCount ?? 0) + 1;
+    runStatistics?.recordRhythmTarget(round.id, round.typeId, state.mode, targetIndex, false);
     syncRhythmInputIndex(round);
     applyRhythmMiss(round);
     notifyDebug('onRhythmTargetResolved', {
@@ -624,21 +753,55 @@ export function createGame(options = {}) {
   }
 
   function applyPendingCombatDamage() {
-    if (state.combatPendingDamage <= 0) return;
+    if (state.combatPendingDamage <= 0) {
+      state.combatAttackDamageContext = null;
+      state.combatPendingDamageBreakdown = null;
+      return;
+    }
     const currentHp = state.monsterHp ?? state.monsterMaxHp ?? GAME_CONFIG.monsterBaseHp;
-    state.monsterHp = Math.max(0, currentHp - state.combatPendingDamage);
+    const calculatedDamage = state.combatPendingDamage;
+    const actualDamage = Math.min(Math.max(0, currentHp), calculatedDamage);
+    state.monsterHp = Math.max(0, currentHp - actualDamage);
+    if (state.combatPendingDamageBreakdown) {
+      runStatistics?.recordCombatDamage(state.activeMonsterEvent, {
+        ...state.combatPendingDamageBreakdown,
+        calculatedDamage,
+        actualDamage
+      });
+    }
     state.combatPendingDamage = 0;
+    state.combatPendingDamageBreakdown = null;
+    state.combatAttackDamageContext = null;
+  }
+
+  function combatDamageBreakdown(context, rapidTapDamage = 0) {
+    const multiplier = Math.max(0, Number(context.colorMultiplier) || 1);
+    const baseDamage = Math.max(0, Number(context.baseDamage) || 0);
+    const rapidDamage = Math.max(0, Number(rapidTapDamage) || 0);
+    return {
+      baseAttackDamage: baseDamage,
+      rapidTapDamage: rapidDamage,
+      colorMultiplierBonusDamage: (baseDamage + rapidDamage) * Math.max(0, multiplier - 1)
+    };
   }
 
   function finishCombatAttackRound(round) {
     const totalCount = round.hitBeats.length;
     const successCount = round.resolvedHits.filter((result) => result === 'success').length;
     const isPerfect = totalCount > 0 && successCount === totalCount;
-    // Perfect rounds defer all damage until the rapid-tap run completes, so
-    // the base damage is included exactly once with the tap bonus.
-    state.combatPendingDamage = isPerfect ? 0 : totalCount > 0
-      ? Math.round(state.runUpgrades.baseAttackDamage * (successCount / totalCount))
-      : 0;
+    runStatistics?.recordAttackRound(state.activeMonsterEvent);
+    const context = {
+      typeId: round.typeId,
+      colorMultiplier: GAME_CONFIG.combatRhythmDamageMultipliers[round.typeId] ?? 1,
+      baseDamage: totalCount > 0 ? baseAttackDamageForRun() * (successCount / totalCount) : 0,
+      successCount,
+      totalCount
+    };
+    state.combatAttackDamageContext = context;
+    // Perfect rounds defer the single color multiplier until the rapid-tap
+    // damage is known, so both damage sources are multiplied together once.
+    state.combatPendingDamage = isPerfect ? 0 : reportCombatAttackDamage(context);
+    state.combatPendingDamageBreakdown = isPerfect ? null : combatDamageBreakdown(context);
     state.rhythmRound = null;
     cancelPendingRhythmSpawn('combat-attack-round-finished');
     beginCombatRapidTap(isPerfect);
@@ -650,7 +813,7 @@ export function createGame(options = {}) {
       return;
     }
     const durationUpgradeMultiplier = 1 +
-      state.runUpgrades.rapidTapDurationLevel * GAME_CONFIG.upgradeRapidTapDurationBonus;
+      upgradeCount('rapid-tap-duration') * upgradeEffectAmount('rapid-tap-duration');
     state.rhythmRound = null;
     state.combatRapidTap = {
       elapsedMs: 0,
@@ -669,12 +832,24 @@ export function createGame(options = {}) {
     const rapidTap = state.combatRapidTap;
     if (!rapidTap || state.mode !== 'COMBAT_RAPID_TAP') return;
     if (!rapidTap.disabled) {
-      state.combatPendingDamage = Math.round(
-        state.runUpgrades.baseAttackDamage + rapidTap.tapCount * state.runUpgrades.rapidTapDamage
+      const context = state.combatAttackDamageContext ?? {
+        typeId: null,
+        colorMultiplier: 1,
+        baseDamage: baseAttackDamageForRun(),
+        successCount: 0,
+        totalCount: 0
+      };
+      state.combatPendingDamage = reportCombatAttackDamage(
+        context,
+        rapidTap.tapCount * rapidTapDamageForRun()
+      );
+      state.combatPendingDamageBreakdown = combatDamageBreakdown(
+        context,
+        rapidTap.tapCount * rapidTapDamageForRun()
       );
     }
     state.combatRapidTap = null;
-    setFeedback('DMG ' + state.combatPendingDamage, 'hit');
+    setFeedback('DMG ' + formatDamage(state.combatPendingDamage), 'hit');
     enterMonsterPhase('COMBAT_ATTACK_SETTLE', GAME_CONFIG.combatPlayerAttackDurationMs);
   }
 
@@ -819,6 +994,7 @@ export function createGame(options = {}) {
 
   function finishRhythmRound(round, gameTimerMs) {
     if (state.rhythmRound !== round) return;
+    runStatistics?.recordRhythmBallResolved(round, state.mode);
     round.phase = RHYTHM_PHASE.FINISHED;
     notifyDebug('onRhythmRoundFinished', {
       ...rhythmDebugData(round),
@@ -964,6 +1140,11 @@ export function createGame(options = {}) {
 
   function advanceAutomaticClimb(deltaMs, exactDistance = null) {
     const previousProgress = state.progress;
+    const normalSpeedStart = Math.min(state.climbSpeed, state.maxClimbSpeed);
+    const effectiveSpeedStart = effectiveClimbSpeed();
+    const speedCap = state.maxClimbSpeed;
+    const painMultiplier = climbSpeedMultiplier();
+    const temporarySpeedBonus = state.temporarySpeedBonus;
     const integrated = integrateClimbSpeed(state.climbSpeed, deltaMs / 1000);
     state.climbSpeed = Math.max(GAME_CONFIG.minClimbSpeed, integrated.speed);
     const boostedMs = Math.min(deltaMs, state.temporarySpeedBonusRemainingMs);
@@ -975,6 +1156,19 @@ export function createGame(options = {}) {
     state.temporarySpeedBonusRemainingMs = Math.max(0, state.temporarySpeedBonusRemainingMs - deltaMs);
     if (state.temporarySpeedBonusRemainingMs <= 0) state.temporarySpeedBonus = 0;
     state.progress = Math.min(GAME_CONFIG.maxFloor, previousProgress + distance);
+    runStatistics?.recordClimbSegment({
+      elapsedMs: deltaMs,
+      distanceFloors: Math.max(0, state.progress - previousProgress),
+      startFloor: previousProgress,
+      endFloor: state.progress,
+      normalSpeedStart,
+      effectiveSpeedStart,
+      maxSpeed: speedCap,
+      painMultiplier,
+      temporarySpeedBonus,
+      temporarySpeedBonusDurationMs: boostedMs
+    });
+    runStatistics?.recordFloorArrivals(previousProgress, state.progress, state.timerMs);
     state.stepPhase = (state.stepPhase + distance / GAME_CONFIG.stepCycleDistanceFloors) % 1;
     consumeDebuffDistance(state, state.progress - previousProgress);
     advanceRhythm(deltaMs);
@@ -1077,6 +1271,21 @@ export function createGame(options = {}) {
   function finishGame() {
     cancelPendingRhythmSpawn('game-finished');
     state.progress = GAME_CONFIG.maxFloor;
+    runStatistics?.recordFinalFloorArrival(state.timerMs);
+    const wallEndedAtMs = wallClockNow();
+    state.runReport = runStatistics?.finalize({
+      result: 'victory',
+      timerMs: state.timerMs,
+      wallEndedAtMs,
+      finalFloor: state.progress,
+      baseSpeed: state.climbSpeed,
+      effectiveSpeed: effectiveClimbSpeed(),
+      speedCap: state.maxClimbSpeed,
+      effectiveSpeedCap: effectiveMaxClimbSpeed(),
+      remainingCharges: state.skipSkillCharges,
+      remainingEnergy: state.skipSkillEnergy,
+      stateStats: state.stats
+    }) ?? null;
     state.mode = 'RESULT';
     state.activeQte = null;
     state.preparedQte = null;
@@ -1088,6 +1297,8 @@ export function createGame(options = {}) {
     state.combatDefenseRound = null;
     state.combatRapidTap = null;
     state.combatPendingDamage = 0;
+    state.combatPendingDamageBreakdown = null;
+    state.combatAttackDamageContext = null;
     state.monsterDebuffApplied = false;
     state.eventPhaseElapsedMs = 0;
     state.eventPhaseDurationMs = 0;
@@ -1100,9 +1311,14 @@ export function createGame(options = {}) {
   }
 
   function resolveSolution(solution) {
-    const context = state.activeQte?.context === QTE_CONTEXT.DEFENSE_RECOVERY
+    const qte = state.activeQte;
+    if (!qte || qte.successResolved) return;
+    qte.successResolved = true;
+    const context = qte.context === QTE_CONTEXT.DEFENSE_RECOVERY
       ? QTE_CONTEXT.DEFENSE_RECOVERY
       : QTE_CONTEXT.ENCOUNTER;
+    runStatistics?.recordQteResult(context, true);
+    const qteDamage = applyQteSuccessDamage(state.activeMonsterEvent);
     if (context === QTE_CONTEXT.ENCOUNTER) state.encounterQteFailureCount = 0;
     state.qteItemUse = {
       context,
@@ -1112,7 +1328,8 @@ export function createGame(options = {}) {
       message: context === QTE_CONTEXT.DEFENSE_RECOVERY
         ? (solution.emergencyMessage ?? '成功避免這次負面狀態')
         : (solution.itemMessage ?? ('成功完成「' + (solution.word ?? '') + '」解法！')),
-      debuffAlreadyApplied: state.monsterDebuffApplied
+      debuffAlreadyApplied: state.monsterDebuffApplied,
+      qteDamage
     };
     state.stats.qteWins += 1;
     state.activeQte = null;
@@ -1151,7 +1368,9 @@ export function createGame(options = {}) {
 
     if (state.activeMonster) {
       state.combatPendingDamage = 0;
-      beginCombatAttackIntro();
+      state.combatPendingDamageBreakdown = null;
+      if ((state.monsterHp ?? 0) <= 0) beginCombatVictory();
+      else beginCombatAttackIntro();
       setFeedback(effectResult.message, effectResult.debuffCured ? 'success' : effectResult.kind);
       return;
     }
@@ -1175,6 +1394,7 @@ export function createGame(options = {}) {
     if (state.activeQte?.context === QTE_CONTEXT.DEFENSE_RECOVERY) {
       const monster = state.activeMonster;
       if (!monster) return;
+      runStatistics?.recordQteResult(QTE_CONTEXT.DEFENSE_RECOVERY, false);
       state.stats.qteLosses += 1;
       const appliedDebuff = applyDebuff(state, monster.failureDebuff);
       const debuffName = appliedDebuff
@@ -1196,6 +1416,8 @@ export function createGame(options = {}) {
 
     const monster = state.activeQte?.monster;
     if (!monster) return;
+    const qteContext = state.activeQte?.context ?? QTE_CONTEXT.ENCOUNTER;
+    runStatistics?.recordQteResult(qteContext, false);
     if (state.activeQte?.context === QTE_CONTEXT.ENCOUNTER) {
       state.encounterQteFailureCount += 1;
     }
@@ -1204,7 +1426,9 @@ export function createGame(options = {}) {
     state.stats.qteLosses += 1;
     // The monster's cast already applied its debuff before the QTE preview.
     // Keep the existing failure knockback/combo rules without applying it twice.
+    const progressBeforeKnockback = state.progress;
     knockBack(state, knockbackFloors, state.monsterDebuffApplied ? null : monster.failureDebuff);
+    runStatistics?.recordKnockback(Math.max(0, progressBeforeKnockback - state.progress));
     syncStairNode(state.progress, false);
     if (event && !event.skipped && !event.defeated) {
       event.triggered = false;
@@ -1249,6 +1473,7 @@ export function createGame(options = {}) {
     state.rhythmRound = null;
     state.combatDefenseRound = null;
     state.combatRapidTap = null;
+    runStatistics?.recordCombatStart(state.activeMonsterEvent, state.timerMs);
     enterMonsterPhase('COMBAT_ATTACK_INTRO', GAME_CONFIG.combatRoundIntroDurationMs);
   }
 
@@ -1257,6 +1482,8 @@ export function createGame(options = {}) {
     state.combatDefenseRound = null;
     state.combatRapidTap = null;
     state.combatPendingDamage = 0;
+    state.combatPendingDamageBreakdown = null;
+    state.combatAttackDamageContext = null;
     state.eventPhaseElapsedMs = 0;
     state.eventPhaseDurationMs = 0;
     state.mode = 'COMBAT_ATTACK';
@@ -1298,6 +1525,7 @@ export function createGame(options = {}) {
     const event = state.activeMonsterEvent;
     if (state.activeMonster && (state.monsterHp ?? 1) <= 0 && event && !event.defeatRewardGranted) {
       event.defeatRewardGranted = true;
+      runStatistics?.recordMonsterDefeated(event, state.timerMs);
       grantMonsterSpeedGrowth();
       notifyDebug('onMonsterDefeated', {
         eventId: event.id,
@@ -1322,6 +1550,8 @@ export function createGame(options = {}) {
     state.combatDefenseRound = null;
     state.combatRapidTap = null;
     state.combatPendingDamage = 0;
+    state.combatPendingDamageBreakdown = null;
+    state.combatAttackDamageContext = null;
     state.eventPhaseElapsedMs = 0;
     state.eventPhaseDurationMs = 0;
     state.activeQte = null;
@@ -1333,6 +1563,7 @@ export function createGame(options = {}) {
       event.upgradeRewardGranted = true;
       state.upgradeChoices = drawUpgradeChoices();
       state.mode = 'UPGRADE_SELECT';
+      upgradeSelectionStartedAtMs = wallClockNow();
       setFeedback('選擇一項強化', 'success');
       return;
     }
@@ -1350,22 +1581,42 @@ export function createGame(options = {}) {
 
   function chooseUpgrade(cardId) {
     if (state.mode !== 'UPGRADE_SELECT' || !state.upgradeChoices.includes(cardId)) return false;
-    if (cardId === 'base-attack') {
-      state.runUpgrades.baseAttackDamage += GAME_CONFIG.upgradeBaseAttackBonus;
-    } else if (cardId === 'rapid-tap-attack') {
-      state.runUpgrades.rapidTapDamage += GAME_CONFIG.upgradeRapidTapDamageBonus;
-    } else if (cardId === 'rhythm-precision') {
-      state.runUpgrades.rhythmJudgmentLevel += 1;
-    } else if (cardId === 'rapid-tap-duration') {
-      state.runUpgrades.rapidTapDurationLevel += 1;
-    } else if (cardId === 'qte-duration') {
-      state.runUpgrades.qteDurationLevel += 1;
-    } else if (cardId === 'max-speed') {
-      state.runUpgrades.maxClimbSpeedLevel += 1;
-      state.maxClimbSpeed += GAME_CONFIG.upgradeMaxClimbSpeedBonus;
-    } else {
-      return false;
+    const card = upgradeCard(cardId);
+    if (!card) return false;
+    const valuesBefore = upgradeValueSnapshot();
+
+    switch (card.effect.type) {
+      case 'base-attack':
+      case 'rapid-tap-damage':
+      case 'rhythm-precision':
+      case 'rapid-tap-duration':
+      case 'qte-duration':
+      case 'energy-gain':
+        break;
+      case 'speed-breakthrough':
+        state.maxClimbSpeed += card.effect.maxSpeedPerSelection;
+        state.climbSpeed = Math.min(
+          state.maxClimbSpeed,
+          state.climbSpeed + card.effect.currentSpeedPerSelection
+        );
+        break;
+      default:
+        return false;
     }
+    state.runUpgrades[cardId] = upgradeCount(cardId) + 1;
+    const selectionWallTimeMs = upgradeSelectionStartedAtMs === null
+      ? 0
+      : Math.max(0, wallClockNow() - upgradeSelectionStartedAtMs);
+    upgradeSelectionStartedAtMs = null;
+    runStatistics?.recordUpgradeSelection({
+      cardId,
+      floor: state.progress,
+      timerMs: state.timerMs,
+      level: upgradeCount(cardId),
+      before: valuesBefore,
+      after: upgradeValueSnapshot(),
+      selectionWallTimeMs
+    });
 
     state.upgradeChoices = [];
     state.activeMonsterEvent = null;
@@ -1377,7 +1628,6 @@ export function createGame(options = {}) {
     );
     updateSkipSkillWindow();
     previousFrameTime = null;
-    const card = UPGRADE_CARDS.find((candidate) => candidate.id === cardId);
     notifyDebug('onUpgradeChosen', { cardId });
     setFeedback((card?.name ?? '強化') + '已生效', 'success');
     notify();
@@ -1391,6 +1641,8 @@ export function createGame(options = {}) {
     if (!event?.skipWindowUnlocked || event.floor <= state.progress + 1e-8) return false;
 
     state.skipSkillCharges -= 1;
+    runStatistics?.recordChargeUsed();
+    runStatistics?.recordMonsterSkipped(event, state.timerMs);
     event.skipped = true;
     event.skipWindowUnlocked = false;
     grantMonsterSpeedGrowth();
@@ -1439,6 +1691,7 @@ export function createGame(options = {}) {
     state.activeQte.monsterHp = state.monsterHp;
     state.activeQte.monsterMaxHp = state.monsterMaxHp;
     state.activeQte.message = '';
+    runStatistics?.recordQteStart(QTE_CONTEXT.DEFENSE_RECOVERY);
     state.eventPhaseElapsedMs = 0;
     state.eventPhaseDurationMs = 0;
     state.mode = 'MONSTER_QTE';
@@ -1452,6 +1705,7 @@ export function createGame(options = {}) {
     state.activeMonsterEvent = event;
     if (!event.monster) event.monster = chooseMonster(random, options.monsters);
     state.activeMonster = event.monster;
+    runStatistics?.recordMonsterEncounter(event, state.activeMonster, state.timerMs);
     const monsterOrder = Math.max(1, Number.isFinite(event.id)
       ? event.id
       : state.monsterEvents.indexOf(event) + 1);
@@ -1460,6 +1714,8 @@ export function createGame(options = {}) {
     state.combatDefenseRound = null;
     state.combatRapidTap = null;
     state.combatPendingDamage = 0;
+    state.combatPendingDamageBreakdown = null;
+    state.combatAttackDamageContext = null;
     state.activeQte = null;
     state.qteItemUse = null;
     state.preparedQte = createQte(
@@ -1555,6 +1811,11 @@ export function createGame(options = {}) {
     // interactive only when the preview phase has fully elapsed.
     state.activeQte = state.preparedQte;
     state.preparedQte = null;
+    const qteUpgradeMs = upgradeCount('qte-duration') * upgradeEffectAmount('qte-duration', 'perSelectionMs');
+    runStatistics?.recordQteStart(
+      QTE_CONTEXT.ENCOUNTER,
+      Math.max(0, state.activeQte.durationMs - GAME_CONFIG.monsterQteDurationMs - qteUpgradeMs)
+    );
     state.eventPhaseElapsedMs = 0;
     state.eventPhaseDurationMs = 0;
     state.mode = 'MONSTER_QTE';
@@ -1564,6 +1825,8 @@ export function createGame(options = {}) {
     const bestTimeMs = state.bestTimeMs;
     const antiDizzinessMode = state.antiDizzinessMode;
     state = freshState(bestTimeMs, antiDizzinessMode);
+    upgradeSelectionStartedAtMs = null;
+    runStatistics = createRunStatistics({ mode: runMode, startedAtMs: wallClockNow() });
     state.monsterEvents = scheduleMonsterEvents(random, options.eventRanges ?? GAME_CONFIG.monsterEventFloors);
     state.mode = 'CLIMBING';
     state.rhythmTapSerial = rhythmTapSerial;
@@ -1630,6 +1893,7 @@ export function createGame(options = {}) {
       resolveRhythmTarget(round, round.inputIndex);
     } else {
       round.failedPressCount = (round.failedPressCount ?? 0) + 1;
+      runStatistics?.recordIncorrectPress(round.id, round.typeId, state.mode);
       applyRhythmMiss(round);
       setFeedback(state.mode === 'COMBAT_ATTACK' ? '攻擊拍點失誤' : UI_TEXT.miss, 'miss');
       triggerRhythmFeedback('miss');
@@ -1717,7 +1981,7 @@ export function createGame(options = {}) {
         const durationMs = Math.max(0, state.eventPhaseDurationMs);
         const untilPhaseEndMs = Math.max(0, durationMs - state.eventPhaseElapsedMs);
         const elapsedMs = Math.min(remainingMs, untilPhaseEndMs);
-        state.timerMs += elapsedMs;
+        advanceOfficialTime(elapsedMs);
         state.eventPhaseElapsedMs += elapsedMs;
         remainingMs -= elapsedMs;
         if (state.eventPhaseElapsedMs + 1e-6 >= durationMs) {
@@ -1731,7 +1995,7 @@ export function createGame(options = {}) {
         const durationMs = Math.max(0, state.eventPhaseDurationMs);
         const untilPhaseEndMs = Math.max(0, durationMs - state.eventPhaseElapsedMs);
         const elapsedMs = Math.min(remainingMs, untilPhaseEndMs);
-        state.timerMs += elapsedMs;
+        advanceOfficialTime(elapsedMs);
         state.eventPhaseElapsedMs += elapsedMs;
         remainingMs -= elapsedMs;
         if (state.eventPhaseElapsedMs + 1e-6 >= durationMs) {
@@ -1744,7 +2008,7 @@ export function createGame(options = {}) {
       if (state.mode === 'MONSTER_QTE') {
         if (!state.activeQte) break;
         const elapsedMs = Math.min(remainingMs, state.activeQte.remainingMs);
-        state.timerMs += elapsedMs;
+        advanceOfficialTime(elapsedMs);
         state.activeQte.remainingMs = Math.max(0, state.activeQte.remainingMs - elapsedMs);
         remainingMs -= elapsedMs;
         if (state.activeQte.remainingMs <= 0) resolveQteFailure();
@@ -1754,7 +2018,7 @@ export function createGame(options = {}) {
         const round = state.combatDefenseRound;
         if (!round) break;
         const elapsedMs = Math.min(remainingMs, Math.max(0, round.durationMs - round.elapsedMs));
-        state.timerMs += elapsedMs;
+        advanceOfficialTime(elapsedMs);
         remainingMs -= elapsedMs;
         advanceCombatDefenseRound(elapsedMs);
         if (state.mode !== 'COMBAT_DEFENSE') continue;
@@ -1763,14 +2027,14 @@ export function createGame(options = {}) {
       if (state.mode === 'COMBAT_RAPID_TAP') {
         const beforeMs = remainingMs;
         remainingMs = advanceCombatRapidTap(remainingMs);
-        state.timerMs += beforeMs - remainingMs;
+        advanceOfficialTime(beforeMs - remainingMs);
         if (state.mode !== 'COMBAT_RAPID_TAP' && remainingMs > 1e-6) continue;
         break;
       }
       if (state.mode === 'COMBAT_ATTACK') {
         const beforeMs = remainingMs;
         remainingMs = advanceRhythm(remainingMs, state.timerMs);
-        state.timerMs += beforeMs - remainingMs;
+        advanceOfficialTime(beforeMs - remainingMs);
         if (state.mode !== 'COMBAT_ATTACK' && remainingMs > 1e-6) continue;
         remainingMs = 0;
         continue;
@@ -1779,7 +2043,7 @@ export function createGame(options = {}) {
 
       if (state.isLandingPaused) {
         const elapsedMs = Math.min(remainingMs, state.landingPauseRemainingMs);
-        state.timerMs += elapsedMs;
+        advanceOfficialTime(elapsedMs);
         advanceRhythm(elapsedMs);
         state.landingPauseRemainingMs = Math.max(0, state.landingPauseRemainingMs - elapsedMs);
         remainingMs -= elapsedMs;
@@ -1789,7 +2053,7 @@ export function createGame(options = {}) {
 
       if (state.isTurning) {
         const elapsedMs = Math.min(remainingMs, state.turnRemainingMs);
-        state.timerMs += elapsedMs;
+        advanceOfficialTime(elapsedMs);
         advanceRhythm(elapsedMs);
         updateSkipSkillWindow();
         state.turnRemainingMs = Math.max(0, state.turnRemainingMs - elapsedMs);
@@ -1837,7 +2101,7 @@ export function createGame(options = {}) {
         break;
       }
 
-      state.timerMs += elapsedMs;
+      advanceOfficialTime(elapsedMs);
       advanceAutomaticClimb(elapsedMs, reachesBoundary ? distanceToBoundary : null);
       remainingMs = Math.max(0, remainingMs - elapsedMs);
 
