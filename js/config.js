@@ -345,7 +345,7 @@ export const UI_TEXT = Object.freeze({
   menuEyebrow: 'READY, CLIMBER?',
   startButton: '開始登頂',
   howToTitle: '怎麼玩？',
-  howToLines: ['樓梯會自動向上；依照球的節奏，在黃色拍點按 SPACE 或點擊畫面。', '完成整組節奏可加速，速度會隨時間緩慢下降。', '遇到怪物時依序拼字；戰鬥中按 SPACE 或點擊畫面攻防。'],
+  howToLines: ['樓梯會自動向上；依照球的節奏，在黃色拍點按空白鍵或點擊畫面。', '完成整組節奏可加速，速度會隨時間緩慢下降。', '遇到怪物時依序拼字；戰鬥中按空白鍵或點擊畫面攻防。'],
   pauseTitle: '先喘口氣',
   pauseBody: '台北 101 不會趁你休息偷偷長高。',
   resumeButton: '繼續攀登',

@@ -15,7 +15,6 @@ let lastRhythmFeedbackSerial = null;
 let lastRapidTapRound = null;
 let lastRapidTapCount = 0;
 let rapidTapAudioRoundSerial = 0;
-const rapidTapArrowKeysDown = new Set();
 if (debug.enabled && typeof window !== 'undefined') {
   window.__rhythmAudioDebug = () => rhythmAudio.getDiagnostics();
   console.info('[RHYTHM AUDIO DEBUG] Use __rhythmAudioDebug() to inspect the current ball timeline.');
@@ -24,7 +23,7 @@ const ui = createUI((action, payload) => {
   if (action === 'start') startGame();
   else if (action === 'rhythm') {
     void rhythmAudio.unlock();
-    game.pressRhythm();
+    game.pressRhythm(undefined, payload ?? 'manual');
   } else if (action === 'qte-letter') game.pressQteLetter(payload);
   else if (action === 'combat-shield') game.pressCombatShield(payload);
   else if (action === 'choose-upgrade') game.chooseUpgrade(payload);
@@ -41,7 +40,6 @@ function startGame() {
   lastRapidTapRound = null;
   lastRapidTapCount = 0;
   rapidTapAudioRoundSerial = 0;
-  rapidTapArrowKeysDown.clear();
   rhythmAudio.reset();
   void rhythmAudio.unlock();
   game.start(globalThis.performance?.now?.());
@@ -70,7 +68,6 @@ game.subscribe((state) => {
 
   const rapidTap = state.mode === 'COMBAT_RAPID_TAP' ? state.combatRapidTap : null;
   if (!rapidTap) {
-    rapidTapArrowKeysDown.clear();
     lastRapidTapRound = null;
     lastRapidTapCount = 0;
   } else if (rapidTap !== lastRapidTapRound) {
@@ -97,22 +94,12 @@ document.addEventListener('pointerdown', () => {
 }, { passive: true });
 
 document.addEventListener('keydown', (event) => {
-  if (event.code === 'ArrowLeft' || event.code === 'ArrowRight') {
-    if (event.target instanceof Element && event.target.closest('button, input, select, textarea, [contenteditable="true"]')) return;
-    if (game.getState().mode !== 'COMBAT_RAPID_TAP') return;
-    event.preventDefault();
-    if (event.repeat || rapidTapArrowKeysDown.has(event.code)) return;
-    rapidTapArrowKeysDown.add(event.code);
-    void rhythmAudio.unlock();
-    game.pressRhythm(undefined, event.code === 'ArrowLeft' ? 'keyboard-left' : 'keyboard-right');
-    return;
-  }
   if (event.code === 'Space') {
     if (event.target instanceof Element && event.target.closest('button, input, select, textarea, [contenteditable="true"]')) return;
     event.preventDefault();
     if (!event.repeat) {
       if (!['MENU', 'PAUSED', 'GAME_OVER'].includes(game.getState().mode)) void rhythmAudio.unlock();
-      game.pressRhythm();
+      game.pressRhythm(undefined, 'keyboard-space');
     }
   } else if (event.code === 'Escape') {
     if (game.getState().mode === 'PAUSED') resumeGame();
@@ -120,12 +107,7 @@ document.addEventListener('keydown', (event) => {
   }
 });
 
-document.addEventListener('keyup', (event) => {
-  if (event.code === 'ArrowLeft' || event.code === 'ArrowRight') rapidTapArrowKeysDown.delete(event.code);
-});
-
 function pauseForFocusLoss() {
-  rapidTapArrowKeysDown.clear();
   rhythmAudio.interrupt();
   if (debug.enabled) {
     game.resetFrameClock();

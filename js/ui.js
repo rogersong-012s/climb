@@ -1353,7 +1353,7 @@ export function createUI(onAction) {
       ['計算傷害 / 實際扣血', formatReportNumber(combat.calculatedDamage, 2) + ' / ' + formatReportNumber(combat.actualDamage, 2)],
       ['基礎攻擊傷害', formatReportNumber(combat.baseAttackDamage, 2)],
       ['連打傷害', formatReportNumber(combat.rapidTapDamage, 2)],
-      ['有效連打輸入（← / →）', (combat.rapidTapKeyboardLeft ?? 0) + ' / ' + (combat.rapidTapKeyboardRight ?? 0) + ' 次 · 全部 ' + (combat.rapidTapInputCount ?? 0)],
+      ['連打輸入（鍵盤／滑鼠／觸控）', (combat.rapidTapKeyboardSpace ?? 0) + ' / ' + (combat.rapidTapMouse ?? 0) + ' / ' + (combat.rapidTapTouch ?? 0) + ' 次 · 全部 ' + (combat.rapidTapInputCount ?? 0)],
       ['節奏顏色加成傷害', formatReportNumber(combat.colorMultiplierBonusDamage, 2)],
       ['QTE 強化傷害', formatReportNumber(combat.qteDamage, 2)],
       ['每隻擊敗怪物平均戰鬥時間', formatReportSeconds(combat.averageBattleSecondsPerDefeatedMonster)]
@@ -1684,7 +1684,7 @@ export function createUI(onAction) {
       ? '<div class="defense-vortex is-' + escapeHtml(round.shieldColor) + '" aria-hidden="true"><i></i><i></i><i></i></div>'
       : '';
     const instruction = showInstruction
-      ? '<p class="combat-defense-instruction">SPACE／點擊畫面任意處防禦</p>'
+      ? '<p class="combat-defense-instruction">空白鍵／點擊畫面任意處防禦</p>'
       : '';
     return '<div class="combat-defense-field is-' + escapeHtml(round.shieldColor) + '" style="--laser-color:' +
       escapeHtml(round.laserColor) + ';--shield-y:' + Number(shield.y) + '%;--laser-start-y:' + laserStartY +
@@ -2053,10 +2053,11 @@ export function createUI(onAction) {
     const activeMode = state.mode === 'PAUSED' ? state.resumeMode : state.mode;
     const rapidTap = activeMode === 'COMBAT_RAPID_TAP' ? state.combatRapidTap : null;
     const rapidTapControlsActive = Boolean(rapidTap && !rapidTap.disabled);
-    if (desktopControlHint) desktopControlHint.textContent = rapidTapControlsActive ? '← / → 連打' : 'SPACE';
-    if (mobileControlHint) mobileControlHint.textContent = rapidTapControlsActive ? '觸控連打' : '點擊任意處';
+    const coarsePointer = globalThis.matchMedia?.('(pointer: coarse)')?.matches ?? false;
+    if (desktopControlHint) desktopControlHint.textContent = rapidTapControlsActive ? '空白鍵 + 滑鼠連打' : '空白鍵 / 點擊畫面';
+    if (mobileControlHint) mobileControlHint.textContent = rapidTapControlsActive ? '快速點擊・支援雙指' : '點擊畫面';
     if (controlHintCopy) controlHintCopy.textContent = rapidTapControlsActive
-      ? (globalThis.matchMedia?.('(pointer: coarse)')?.matches ? '快速輸出' : '可同時按')
+      ? (coarsePointer ? '' : '可同時輸入')
       : '依序踩拍';
     const mobileWobble = globalThis.matchMedia?.('(max-width: 600px)')?.matches ?? false;
     const reducedMotion = globalThis.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches ?? false;
@@ -2123,7 +2124,7 @@ export function createUI(onAction) {
         COMBAT_ATTACK_INTRO: '準備攻擊',
         COMBAT_RAPID_TAP: '連打輸出',
         COMBAT_DEFENSE_INTRO: '準備防禦',
-        COMBAT_DEFENSE: 'SPACE／點擊任意處防禦',
+        COMBAT_DEFENSE: '空白鍵／點擊任意處防禦',
         MONSTER_QTE: 'QTE 中斷節奏'
       };
       rhythmLabel.textContent = rhythmModeLabels[activeMode] ?? '等待節奏球';
@@ -2444,7 +2445,8 @@ export function createUI(onAction) {
     skipSkillEnergy.style.width = energyPercent.toFixed(2) + '%';
     skipSkillMeter.setAttribute('aria-valuemax', String(skipStatus.energyRequired));
     skipSkillMeter.setAttribute('aria-valuenow', String(visibleEnergy.toFixed(2)));
-    skipSkillButton.disabled = !skipStatus.canUse;
+    skipSkillButton.setAttribute('aria-disabled', String(!skipStatus.canUse));
+    skipSkillButton.tabIndex = skipStatus.canUse ? 0 : -1;
     skipSkillButton.classList.toggle('is-window-open', skipStatus.windowOpen);
     skipSkillButton.classList.toggle('is-ready', skipStatus.isReady);
     const targetDescription = skipStatus.nextMonsterFloor === null
@@ -2690,14 +2692,28 @@ export function createUI(onAction) {
   skipSkillButton.addEventListener('click', (event) => {
     event.preventDefault();
     event.stopPropagation();
-    if (!skipSkillButton.disabled) onAction('use-skip-skill');
+    if (skipSkillButton.getAttribute('aria-disabled') !== 'true') onAction('use-skip-skill');
   });
+  const activeGamePointerIds = new Set();
+  const specialInputSelector = [
+    'button', 'a', 'input', 'select', 'textarea', '[contenteditable="true"]',
+    '[role="button"]', '[role="slider"]', '[data-action]', '[data-setting]',
+    '[data-tile-id]', '[data-upgrade-id]', '[data-report-action]', '[data-report-tab]',
+    '[data-audio-volume]', '.qte-layer', '.modal-layer'
+  ].join(', ');
   gameRoot.addEventListener('pointerdown', (event) => {
-    if (event.pointerType === 'mouse' || event.button !== 0) return;
-    if (event.target.closest('button, a, input, select, textarea, [data-action], [data-setting], [data-tile-id], .modal-layer')) return;
+    if (event.button !== 0) return;
+    const target = event.target instanceof Element ? event.target : null;
+    if (!target || target.closest(specialInputSelector)) return;
+    if (activeGamePointerIds.has(event.pointerId)) return;
+    activeGamePointerIds.add(event.pointerId);
     event.preventDefault();
-    onAction('rhythm');
+    onAction('rhythm', event.pointerType === 'mouse' ? 'mouse' : 'touch');
   }, { passive: false });
+  const releaseGamePointer = (event) => activeGamePointerIds.delete(event.pointerId);
+  window.addEventListener('pointerup', releaseGamePointer);
+  window.addEventListener('pointercancel', releaseGamePointer);
+  window.addEventListener('blur', () => activeGamePointerIds.clear());
   track.addEventListener('animationend', (event) => {
     if (event.target !== track || !['rhythm-hit-flash', 'rhythm-miss-shake'].includes(event.animationName)) return;
     track.classList.remove('is-rhythm-hit', 'is-rhythm-miss', 'is-feedback-active');
