@@ -1353,7 +1353,7 @@ export function createUI(onAction) {
       ['計算傷害 / 實際扣血', formatReportNumber(combat.calculatedDamage, 2) + ' / ' + formatReportNumber(combat.actualDamage, 2)],
       ['基礎攻擊傷害', formatReportNumber(combat.baseAttackDamage, 2)],
       ['連打傷害', formatReportNumber(combat.rapidTapDamage, 2)],
-      ['有效連打輸入（A / D）', (combat.rapidTapKeyboardA ?? 0) + ' / ' + (combat.rapidTapKeyboardD ?? 0) + ' 次 · 全部 ' + (combat.rapidTapInputCount ?? 0)],
+      ['有效連打輸入（← / →）', (combat.rapidTapKeyboardLeft ?? 0) + ' / ' + (combat.rapidTapKeyboardRight ?? 0) + ' 次 · 全部 ' + (combat.rapidTapInputCount ?? 0)],
       ['節奏顏色加成傷害', formatReportNumber(combat.colorMultiplierBonusDamage, 2)],
       ['QTE 強化傷害', formatReportNumber(combat.qteDamage, 2)],
       ['每隻擊敗怪物平均戰鬥時間', formatReportSeconds(combat.averageBattleSecondsPerDefeatedMonster)]
@@ -2053,7 +2053,7 @@ export function createUI(onAction) {
     const activeMode = state.mode === 'PAUSED' ? state.resumeMode : state.mode;
     const rapidTap = activeMode === 'COMBAT_RAPID_TAP' ? state.combatRapidTap : null;
     const rapidTapControlsActive = Boolean(rapidTap && !rapidTap.disabled);
-    if (desktopControlHint) desktopControlHint.textContent = rapidTapControlsActive ? 'A / D 連打' : 'SPACE';
+    if (desktopControlHint) desktopControlHint.textContent = rapidTapControlsActive ? '← / → 連打' : 'SPACE';
     if (mobileControlHint) mobileControlHint.textContent = rapidTapControlsActive ? '觸控連打' : '點擊任意處';
     if (controlHintCopy) controlHintCopy.textContent = rapidTapControlsActive
       ? (globalThis.matchMedia?.('(pointer: coarse)')?.matches ? '快速輸出' : '可同時按')

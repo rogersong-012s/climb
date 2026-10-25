@@ -335,7 +335,7 @@ export const UPGRADE_CARDS = Object.freeze([
     description: (effect) => '節奏球獲得的技能能量 +' + Math.round(effect.perSelection * 100) + '%',
     icon: '✦',
     color: 'yellow',
-    effect: { type: 'energy-gain', perSelection: 0.2 }
+    effect: { type: 'energy-gain', perSelection: 0.12 }
   })
 ]);
 

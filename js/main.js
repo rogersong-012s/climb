@@ -15,6 +15,7 @@ let lastRhythmFeedbackSerial = null;
 let lastRapidTapRound = null;
 let lastRapidTapCount = 0;
 let rapidTapAudioRoundSerial = 0;
+const rapidTapArrowKeysDown = new Set();
 if (debug.enabled && typeof window !== 'undefined') {
   window.__rhythmAudioDebug = () => rhythmAudio.getDiagnostics();
   console.info('[RHYTHM AUDIO DEBUG] Use __rhythmAudioDebug() to inspect the current ball timeline.');
@@ -40,6 +41,7 @@ function startGame() {
   lastRapidTapRound = null;
   lastRapidTapCount = 0;
   rapidTapAudioRoundSerial = 0;
+  rapidTapArrowKeysDown.clear();
   rhythmAudio.reset();
   void rhythmAudio.unlock();
   game.start(globalThis.performance?.now?.());
@@ -68,6 +70,7 @@ game.subscribe((state) => {
 
   const rapidTap = state.mode === 'COMBAT_RAPID_TAP' ? state.combatRapidTap : null;
   if (!rapidTap) {
+    rapidTapArrowKeysDown.clear();
     lastRapidTapRound = null;
     lastRapidTapCount = 0;
   } else if (rapidTap !== lastRapidTapRound) {
@@ -94,12 +97,14 @@ document.addEventListener('pointerdown', () => {
 }, { passive: true });
 
 document.addEventListener('keydown', (event) => {
-  if (event.code === 'KeyA' || event.code === 'KeyD') {
+  if (event.code === 'ArrowLeft' || event.code === 'ArrowRight') {
     if (event.target instanceof Element && event.target.closest('button, input, select, textarea, [contenteditable="true"]')) return;
-    if (game.getState().mode !== 'COMBAT_RAPID_TAP' || event.repeat) return;
+    if (game.getState().mode !== 'COMBAT_RAPID_TAP') return;
     event.preventDefault();
+    if (event.repeat || rapidTapArrowKeysDown.has(event.code)) return;
+    rapidTapArrowKeysDown.add(event.code);
     void rhythmAudio.unlock();
-    game.pressRhythm(undefined, event.code === 'KeyA' ? 'keyboard-a' : 'keyboard-d');
+    game.pressRhythm(undefined, event.code === 'ArrowLeft' ? 'keyboard-left' : 'keyboard-right');
     return;
   }
   if (event.code === 'Space') {
@@ -115,7 +120,12 @@ document.addEventListener('keydown', (event) => {
   }
 });
 
+document.addEventListener('keyup', (event) => {
+  if (event.code === 'ArrowLeft' || event.code === 'ArrowRight') rapidTapArrowKeysDown.delete(event.code);
+});
+
 function pauseForFocusLoss() {
+  rapidTapArrowKeysDown.clear();
   rhythmAudio.interrupt();
   if (debug.enabled) {
     game.resetFrameClock();

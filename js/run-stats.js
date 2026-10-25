@@ -113,8 +113,8 @@ export function createRunStatistics({ mode = 'manual', startedAtMs = Date.now() 
       baseAttackDamage: 0,
       rapidTapDamage: 0,
       rapidTapInputCount: 0,
-      rapidTapKeyboardA: 0,
-      rapidTapKeyboardD: 0,
+      rapidTapKeyboardLeft: 0,
+      rapidTapKeyboardRight: 0,
       rapidTapOtherInputs: 0,
       rapidTapDebugInputs: 0,
       shieldDefenseAttempts: 0,
@@ -379,8 +379,8 @@ export function createRunStatistics({ mode = 'manual', startedAtMs = Date.now() 
 
   function recordRapidTapInput(source = 'manual', isDebugRun = false) {
     data.combat.rapidTapInputCount += 1;
-    if (source === 'keyboard-a') data.combat.rapidTapKeyboardA += 1;
-    else if (source === 'keyboard-d') data.combat.rapidTapKeyboardD += 1;
+    if (source === 'keyboard-left') data.combat.rapidTapKeyboardLeft += 1;
+    else if (source === 'keyboard-right') data.combat.rapidTapKeyboardRight += 1;
     else if (isDebugRun) data.combat.rapidTapDebugInputs += 1;
     else data.combat.rapidTapOtherInputs += 1;
   }
@@ -625,7 +625,7 @@ export function createRunStatistics({ mode = 'manual', startedAtMs = Date.now() 
 
     for (const key of [
       'calculatedDamage', 'actualDamage', 'baseAttackDamage', 'rapidTapDamage',
-      'rapidTapInputCount', 'rapidTapKeyboardA', 'rapidTapKeyboardD', 'rapidTapOtherInputs', 'rapidTapDebugInputs',
+      'rapidTapInputCount', 'rapidTapKeyboardLeft', 'rapidTapKeyboardRight', 'rapidTapOtherInputs', 'rapidTapDebugInputs',
       'shieldDefenseAttempts', 'shieldDefenseSuccesses', 'colorMultiplierBonusDamage', 'qteDamage',
       'encounterQteDamage', 'shieldQteDamage', 'averageKillAttackRounds',
       'averageBattleSecondsPerDefeatedMonster'
