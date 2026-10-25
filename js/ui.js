@@ -2699,7 +2699,7 @@ export function createUI(onAction) {
     'button', 'a', 'input', 'select', 'textarea', '[contenteditable="true"]',
     '[role="button"]', '[role="slider"]', '[data-action]', '[data-setting]',
     '[data-tile-id]', '[data-upgrade-id]', '[data-report-action]', '[data-report-tab]',
-    '[data-audio-volume]', '.qte-layer', '.modal-layer'
+    '[data-audio-volume]', '.modal-layer'
   ].join(', ');
   gameRoot.addEventListener('pointerdown', (event) => {
     if (event.button !== 0) return;
