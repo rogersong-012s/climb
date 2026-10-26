@@ -316,10 +316,10 @@ export const UPGRADE_CARDS = Object.freeze([
   defineUpgradeCard({
     id: 'qte-duration',
     name: '反應強化',
-    description: (effect) => '初遇 QTE／盾牌判定窗 +' + (effect.perSelectionMs / 1000).toFixed(1) + ' 秒\n成功造成怪物最大 HP ' + Math.round(effect.successDamageRatioPerSelection * 100) + '% 傷害',
+    description: (effect) => '初遇 QTE／盾牌判定窗 +' + (effect.perSelectionMs / 1000).toFixed(1) + ' 秒\n成功造成怪物最大 HP ' + effect.successDamageRatioPerSelection * 100 + '% 傷害',
     icon: '◷',
     color: 'blue',
-    effect: { type: 'qte-duration', perSelectionMs: 300, successDamageRatioPerSelection: 0.04 }
+    effect: { type: 'qte-duration', perSelectionMs: 300, successDamageRatioPerSelection: 0.025 }
   }),
   defineUpgradeCard({
     id: 'max-speed',
