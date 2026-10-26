@@ -95,16 +95,34 @@ document.addEventListener('pointerdown', () => {
 
 document.addEventListener('keydown', (event) => {
   if (event.code === 'Space') {
-    if (event.target instanceof Element && event.target.closest('button, input, select, textarea, [contenteditable="true"]')) return;
+    const target = event.target instanceof Element ? event.target : null;
+    const mode = game.getState().mode;
+    if (target?.closest('#skip-skill')) {
+      // A pointer click can leave this button focused. Keep Space on the
+      // game's input path instead of letting the browser re-activate it.
+      event.preventDefault();
+      if (!event.repeat && !['MENU', 'PAUSED', 'GAME_OVER', 'RESULT', 'UPGRADE_SELECT'].includes(mode)) {
+        if (mode !== 'MENU' && mode !== 'PAUSED' && mode !== 'GAME_OVER') void rhythmAudio.unlock();
+        game.pressRhythm(undefined, 'keyboard-space');
+      }
+      return;
+    }
+    if (target?.closest('button, input, select, textarea, [contenteditable="true"]')) return;
     event.preventDefault();
     if (!event.repeat) {
-      if (!['MENU', 'PAUSED', 'GAME_OVER'].includes(game.getState().mode)) void rhythmAudio.unlock();
+      if (!['MENU', 'PAUSED', 'GAME_OVER'].includes(mode)) void rhythmAudio.unlock();
       game.pressRhythm(undefined, 'keyboard-space');
     }
   } else if (event.code === 'Escape') {
     if (game.getState().mode === 'PAUSED') resumeGame();
     else game.pause();
   }
+});
+
+document.addEventListener('keyup', (event) => {
+  if (event.code !== 'Space') return;
+  const target = event.target instanceof Element ? event.target : null;
+  if (target?.closest('#skip-skill')) event.preventDefault();
 });
 
 function pauseForFocusLoss() {

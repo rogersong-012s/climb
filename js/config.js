@@ -324,10 +324,10 @@ export const UPGRADE_CARDS = Object.freeze([
   defineUpgradeCard({
     id: 'max-speed',
     name: '突破極限',
-    description: (effect) => '速度上限 +' + effect.maxSpeedPerSelection.toFixed(2) + ' F/s、當前速度 +' + effect.currentSpeedPerSelection.toFixed(3) + ' F/s',
+    description: (effect) => '速度上限 +' + effect.maxSpeedPerSelection.toFixed(2) + ' F/s\n當前速度 +' + effect.currentSpeedPerSelection.toFixed(3) + ' F/s\n遇怪衝撞傷害 +' + effect.collisionMultiplierPerSelection + '×速度',
     icon: '↑',
     color: 'green',
-    effect: { type: 'speed-breakthrough', maxSpeedPerSelection: 0.04, currentSpeedPerSelection: 0.025 }
+    effect: { type: 'speed-breakthrough', maxSpeedPerSelection: 0.04, currentSpeedPerSelection: 0.025, collisionMultiplierPerSelection: 20 }
   }),
   defineUpgradeCard({
     id: 'energy-gain',

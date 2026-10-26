@@ -75,6 +75,11 @@ function makeStats() {
     skillChargesUsed: 0,
     chargeHistory: [],
     monstersDefeated: 0,
+    collisionEncounters: 0,
+    collisionCalculatedDamage: 0,
+    collisionDamage: 0,
+    collisionDirectKills: 0,
+    collisionHistory: [],
     upgrades: Object.fromEntries(UPGRADE_CARDS.map((card) => [card.id, 0])),
     colors,
     stages,
@@ -281,6 +286,27 @@ export function createDebugController() {
       stats.defeatedEventIds.add(key);
       stats.monstersDefeated += 1;
     },
+    onMonsterCollision(details) {
+      const precise = (value) => Number((Number(value) || 0).toFixed(4));
+      const collision = {
+        floor: precise(details.floor),
+        encounterAttempt: Math.max(0, Math.floor(Number(details.encounterAttempt) || 0)),
+        effectiveSpeedFloorsPerSecond: precise(details.effectiveSpeedFloorsPerSecond),
+        upgradeCount: Math.max(0, Math.floor(Number(details.upgradeCount) || 0)),
+        multiplier: precise(details.multiplier),
+        calculatedDamage: precise(details.calculatedDamage),
+        actualDamage: precise(details.actualDamage),
+        monsterHpBefore: precise(details.monsterHpBefore),
+        monsterHpAfter: precise(details.monsterHpAfter),
+        defeated: Boolean(details.defeated)
+      };
+      stats.collisionHistory.push(collision);
+      stats.collisionCalculatedDamage += collision.calculatedDamage;
+      stats.collisionDamage += collision.actualDamage;
+      if (collision.multiplier > 0) stats.collisionEncounters += 1;
+      if (collision.defeated) stats.collisionDirectKills += 1;
+      console.info('[DEBUG MODE] 遭遇衝撞', collision);
+    },
     onUpgradeChosen(details) {
       if (details.cardId in stats.upgrades) stats.upgrades[details.cardId] += 1;
     },
@@ -463,6 +489,13 @@ export function createDebugController() {
       gameTimeSeconds: (state?.timerMs ?? 0) / 1000,
       baseSpeed: state?.climbSpeed ?? 0,
       maxSpeed: state?.maxClimbSpeed ?? 0,
+      speedUpgradeCount: stats.upgrades['max-speed'] ?? 0,
+      collisionDamageMultiplier: (stats.upgrades['max-speed'] ?? 0) *
+        (Number(UPGRADE_CARDS.find((card) => card.id === 'max-speed')?.effect?.collisionMultiplierPerSelection) || 0),
+      collisionEncounters: stats.collisionEncounters,
+      collisionCalculatedDamage: Number(stats.collisionCalculatedDamage.toFixed(4)),
+      collisionDamage: Number(stats.collisionDamage.toFixed(4)),
+      collisionDirectKills: stats.collisionDirectKills,
       effectiveSpeedCap: (state?.maxClimbSpeed ?? 0) * painMultiplier,
       finalEffectiveSpeed: state?.climbSpeed !== undefined
         ? (Math.min(state.climbSpeed, state.maxClimbSpeed) +
@@ -513,11 +546,20 @@ export function createDebugController() {
     if (final) {
       console.table(upgradeRows);
       console.table(stats.chargeHistory);
+      console.table(stats.collisionHistory);
       console.log('[DEBUG MODE] 技能充能紀錄摘要', {
         totalEarned: stats.skillChargesEarned,
         totalUsed: stats.skillChargesUsed,
         remaining: state?.skipSkillCharges ?? 0,
         maxStored: GAME_CONFIG.skipSkillMaxCharges
+      });
+      console.log('[DEBUG MODE] 衝撞傷害摘要', {
+        speedUpgradeCount: stats.upgrades['max-speed'] ?? 0,
+        collisionMultiplier: snapshot.collisionDamageMultiplier,
+        encounters: stats.collisionEncounters,
+        totalCalculatedDamage: Number(stats.collisionCalculatedDamage.toFixed(4)),
+        totalActualDamage: Number(stats.collisionDamage.toFixed(4)),
+        directMonsterDefeats: stats.collisionDirectKills
       });
     }
     console.groupEnd();

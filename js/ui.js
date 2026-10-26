@@ -1345,6 +1345,10 @@ export function createUI(onAction) {
     const combatRows = [
       ['擊敗 / 跳過怪物', (combat.monstersDefeated ?? 0) + ' / ' + (combat.monstersSkipped ?? 0)],
       ['遭遇嘗試', String(combat.encounterAttempts ?? 0)],
+      ['突破極限強化次數', String(combat.collisionUpgradeCount ?? report.upgrades?.counts?.['max-speed'] ?? 0)],
+      ['累積衝撞倍率', '×' + formatReportNumber(combat.collisionMultiplier, 0) + '（每次強化 +20）'],
+      ['衝撞遭遇 / 直接擊敗', (combat.collisionEncounters ?? 0) + ' / ' + (combat.collisionDirectKills ?? 0)],
+      ['衝撞計算傷害 / 實際扣血', formatReportNumber(combat.collisionCalculatedDamage, 2) + ' / ' + formatReportNumber(combat.collisionDamage, 2)],
       ['攻擊回合', String(combat.totalAttackRounds ?? 0)],
       ['一回合擊敗', String(combat.oneRoundKills ?? 0)],
       ['兩回合擊敗', String(combat.twoRoundKills ?? 0)],
@@ -1411,11 +1415,17 @@ export function createUI(onAction) {
     const monsterRows = (report.monsterRecords ?? []).map((monster) => {
       const name = monster.monsterName ?? (monster.result === 'skipped' ? '跳過（未遭遇，種類未抽選）' : '未知怪物');
       const resultName = { defeated: '擊敗', skipped: '跳過', pending: '未完成' }[monster.result] ?? monster.result;
+      const collisionHistory = (monster.collisionHistory ?? []).map((entry) =>
+        '第' + entry.attempt + '次 ' + formatReportNumber(entry.effectiveSpeedFloorsPerSecond, 3) + ' F/s ×' +
+        formatReportNumber(entry.multiplier, 0) + ' = 計算 ' + formatReportNumber(entry.calculatedDamage, 2) +
+        '／實扣 ' + formatReportNumber(entry.actualDamage, 2)
+      );
       return [
         '#' + (monster.monsterOrdinal ?? '—') + ' ' + name + ' · ' + monster.floor + 'F',
         resultName + ' · 遭遇 ' + monster.encounterAttempts + ' 次' +
           ((monster.encounterHistory?.length ?? 0) > 1 ? '（重遇樓層：' + monster.encounterHistory.slice(1).map((attempt) => attempt.floor + 'F').join('、') + '）' : '') +
           ' · 攻擊 ' + monster.attackRounds + ' 回合 · 實扣 ' + formatReportNumber(monster.totalDamage, 2) +
+          ' · 衝撞：' + (collisionHistory.length ? collisionHistory.join('；') : '無') +
           ' · 初遇 QTE ' + formatReportNumber(monster.encounterQteDamage, 2) +
           ' · 盾牌 QTE ' + formatReportNumber(monster.shieldQteDamage, 2)
       ];
@@ -2693,6 +2703,8 @@ export function createUI(onAction) {
     event.preventDefault();
     event.stopPropagation();
     if (skipSkillButton.getAttribute('aria-disabled') !== 'true') onAction('use-skip-skill');
+    // Mouse activation should not leave Space captured by the native button.
+    skipSkillButton.blur();
   });
   const activeGamePointerIds = new Set();
   const specialInputSelector = [

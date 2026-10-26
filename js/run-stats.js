@@ -48,7 +48,7 @@ function stageForFloor(floor) {
 export function createRunStatistics({ mode = 'manual', startedAtMs = Date.now() } = {}) {
   const upgradeCounts = Object.fromEntries(UPGRADE_CARDS.map((card) => [card.id, 0]));
   const data = {
-    schemaVersion: '1.1',
+    schemaVersion: '1.2',
     game: '登峰灶急',
     run: {
       mode: mode === 'debug' ? 'debug' : 'manual',
@@ -110,6 +110,12 @@ export function createRunStatistics({ mode = 'manual', startedAtMs = Date.now() 
       qteOnlyKills: 0,
       calculatedDamage: 0,
       actualDamage: 0,
+      collisionUpgradeCount: 0,
+      collisionMultiplier: 0,
+      collisionEncounters: 0,
+      collisionCalculatedDamage: 0,
+      collisionDamage: 0,
+      collisionDirectKills: 0,
       baseAttackDamage: 0,
       rapidTapDamage: 0,
       rapidTapInputCount: 0,
@@ -212,6 +218,11 @@ export function createRunStatistics({ mode = 'manual', startedAtMs = Date.now() 
         qteDamage: 0,
         encounterQteDamage: 0,
         shieldQteDamage: 0,
+        collisionCalculatedDamage: 0,
+        collisionDamage: 0,
+        collisionMultiplier: 0,
+        collisionDefeated: false,
+        collisionHistory: [],
         encounterAttempts: 0,
         encounterHistory: []
       };
@@ -313,16 +324,57 @@ export function createRunStatistics({ mode = 'manual', startedAtMs = Date.now() 
     }
   }
 
-  function recordMonsterEncounter(event, monster, timerMs = 0) {
+  function recordMonsterEncounter(event, monster, timerMs = 0, details = {}) {
     const record = monsterRecord(event, monster);
-    if (!record || record.result === 'defeated' || record.result === 'skipped') return;
+    if (!record || record.result === 'defeated' || record.result === 'skipped') return record?.encounterAttempts ?? 0;
     record.encounterAttempts += 1;
     record.encounterHistory.push({
       attempt: record.encounterAttempts,
       gameTimeSeconds: eventTimeSeconds(timerMs),
-      floor: roundNumber(event.floor, 2)
+      floor: roundNumber(event.floor, 2),
+      effectiveSpeedFloorsPerSecond: roundNumber(details.effectiveSpeedFloorsPerSecond, 4)
     });
     data.combat.encounterAttempts += 1;
+    return record.encounterAttempts;
+  }
+
+  function recordCollisionDamage(event, details = {}) {
+    const record = monsterRecord(event);
+    if (!record) return;
+    const calculated = Math.max(0, Number(details.calculatedDamage) || 0);
+    const actual = Math.max(0, Number(details.actualDamage) || 0);
+    const multiplier = Math.max(0, Number(details.multiplier) || 0);
+    const upgradeCount = Math.max(0, Math.floor(Number(details.upgradeCount) || 0));
+    const encounterAttempt = Math.max(0, Math.floor(Number(details.encounterAttempt) || 0));
+    const entry = {
+      attempt: encounterAttempt,
+      floor: roundNumber(details.floor ?? event.floor, 2),
+      gameTimeSeconds: eventTimeSeconds(details.timerMs),
+      effectiveSpeedFloorsPerSecond: roundNumber(details.effectiveSpeedFloorsPerSecond, 4),
+      upgradeCount,
+      multiplier: roundNumber(multiplier, 3),
+      calculatedDamage: roundNumber(calculated, 4),
+      actualDamage: roundNumber(actual, 4),
+      defeated: Boolean(details.defeated)
+    };
+    record.collisionHistory.push(entry);
+    record.collisionCalculatedDamage += calculated;
+    record.collisionDamage += actual;
+    record.collisionMultiplier = Math.max(record.collisionMultiplier, multiplier);
+    data.combat.collisionUpgradeCount = Math.max(data.combat.collisionUpgradeCount, upgradeCount);
+    if (multiplier > 0) data.combat.collisionEncounters += 1;
+    data.combat.collisionMultiplier = Math.max(data.combat.collisionMultiplier, multiplier);
+    data.combat.collisionCalculatedDamage += calculated;
+    data.combat.collisionDamage += actual;
+    data.combat.calculatedDamage += calculated;
+    data.combat.actualDamage += actual;
+    record.calculatedDamage += calculated;
+    record.totalDamage += actual;
+
+    if (details.defeated && !record.collisionDefeated) {
+      record.collisionDefeated = true;
+      data.combat.collisionDirectKills += 1;
+    }
   }
 
   function recordQteStart(context, compensationMs = 0) {
@@ -559,7 +611,9 @@ export function createRunStatistics({ mode = 'manual', startedAtMs = Date.now() 
     data.combat.oneRoundKills = data.monsterRecords.filter((record) => record.result === 'defeated' && record.attackRounds === 1).length;
     data.combat.twoRoundKills = data.monsterRecords.filter((record) => record.result === 'defeated' && record.attackRounds === 2).length;
     data.combat.threeOrMoreRoundKills = data.monsterRecords.filter((record) => record.result === 'defeated' && record.attackRounds >= 3).length;
-    data.combat.qteOnlyKills = data.monsterRecords.filter((record) => record.result === 'defeated' && record.attackRounds === 0).length;
+    data.combat.qteOnlyKills = data.monsterRecords.filter((record) =>
+      record.result === 'defeated' && record.attackRounds === 0 && !record.collisionDefeated
+    ).length;
     data.combat.averageBattleSecondsPerDefeatedMonster = defeated > 0 ? battleDurationTotalMs / 1000 / defeated : 0;
     data.qte.encounterSuccessRate = data.qte.encounterAttempts > 0
       ? data.qte.encounterSuccesses / data.qte.encounterAttempts : 0;
@@ -630,7 +684,7 @@ export function createRunStatistics({ mode = 'manual', startedAtMs = Date.now() 
       'rapidTapInputCount', 'rapidTapKeyboardSpace', 'rapidTapMouse', 'rapidTapTouch', 'rapidTapOtherInputs', 'rapidTapDebugInputs',
       'shieldDefenseAttempts', 'shieldDefenseSuccesses', 'colorMultiplierBonusDamage', 'qteDamage',
       'encounterQteDamage', 'shieldQteDamage', 'averageKillAttackRounds',
-      'averageBattleSecondsPerDefeatedMonster'
+      'averageBattleSecondsPerDefeatedMonster', 'collisionMultiplier', 'collisionCalculatedDamage', 'collisionDamage'
     ]) data.combat[key] = roundNumber(data.combat[key], 4);
     for (const key of ['qteDamage', 'encounterQteDamage', 'shieldQteDamage']) {
       data.qte[key] = roundNumber(data.qte[key], 4);
@@ -642,11 +696,18 @@ export function createRunStatistics({ mode = 'manual', startedAtMs = Date.now() 
     data.energy.energyBlockedAtMaxCharges = roundNumber(data.energy.energyBlockedAtMaxCharges, 6);
     data.energy.remainingCharges = Math.max(0, Number(remainingCharges) || 0);
     data.energy.remainingEnergy = roundNumber(remainingEnergy, 6);
-    data.combat.encounterAttempts = data.qte.encounterAttempts;
-
     for (const record of data.monsterRecords) {
-      for (const key of ['battleDurationSeconds', 'calculatedDamage', 'totalDamage', 'baseAttackDamage', 'rapidTapDamage', 'colorMultiplierBonusDamage', 'qteDamage', 'encounterQteDamage', 'shieldQteDamage']) {
+      for (const key of ['battleDurationSeconds', 'calculatedDamage', 'totalDamage', 'baseAttackDamage', 'rapidTapDamage', 'colorMultiplierBonusDamage', 'qteDamage', 'encounterQteDamage', 'shieldQteDamage', 'collisionCalculatedDamage', 'collisionDamage', 'collisionMultiplier']) {
         record[key] = roundNumber(record[key], 4);
+      }
+      for (const encounter of record.collisionHistory) {
+        encounter.effectiveSpeedFloorsPerSecond = roundNumber(encounter.effectiveSpeedFloorsPerSecond, 4);
+        encounter.multiplier = roundNumber(encounter.multiplier, 3);
+        encounter.calculatedDamage = roundNumber(encounter.calculatedDamage, 4);
+        encounter.actualDamage = roundNumber(encounter.actualDamage, 4);
+      }
+      for (const encounter of record.encounterHistory) {
+        encounter.effectiveSpeedFloorsPerSecond = roundNumber(encounter.effectiveSpeedFloorsPerSecond, 4);
       }
     }
     for (const split of data.floorSplits) {
@@ -657,6 +718,10 @@ export function createRunStatistics({ mode = 'manual', startedAtMs = Date.now() 
     data.combat.totalCalculatedDamage = data.combat.calculatedDamage;
     data.qte.totalSuccessDamage = data.qte.qteDamage;
     data.upgrades.counts = { ...upgradeCounts, ...data.upgrades.counts };
+    data.combat.collisionUpgradeCount = Math.max(0, Number(data.upgrades.counts['max-speed']) || 0);
+    data.combat.collisionMultiplier = data.combat.collisionUpgradeCount *
+      (Number(UPGRADE_CARDS.find((card) => card.id === 'max-speed')?.effect?.collisionMultiplierPerSelection) || 0);
+    data.combat.collisionMultiplier = roundNumber(data.combat.collisionMultiplier, 3);
     data.stats = {
       hits: Math.max(0, Number(stateStats.hits) || 0),
       misses: Math.max(0, Number(stateStats.misses) || 0),
@@ -684,6 +749,7 @@ export function createRunStatistics({ mode = 'manual', startedAtMs = Date.now() 
     recordFloorArrivals,
     recordFinalFloorArrival,
     recordMonsterEncounter,
+    recordCollisionDamage,
     recordQteStart,
     recordQteResult,
     recordQteDamage,

@@ -283,6 +283,9 @@ export function createGame(options = {}) {
       speedFloorsPerSecond: state.climbSpeed,
       speedCapFloorsPerSecond: state.maxClimbSpeed,
       speedCapBonusPerSelection: Number(speedUpgrade.maxSpeedPerSelection) || 0,
+      collisionMultiplierPerSelection: Number(speedUpgrade.collisionMultiplierPerSelection) || 0,
+      collisionUpgradeCount: upgradeCount('max-speed'),
+      collisionDamageMultiplier: upgradeCount('max-speed') * (Number(speedUpgrade.collisionMultiplierPerSelection) || 0),
       energyGainMultiplier: 1 + upgradeCount('energy-gain') * upgradeEffectAmount('energy-gain')
     };
   }
@@ -1196,6 +1199,7 @@ export function createGame(options = {}) {
     consumeDebuffDistance(state, state.progress - previousProgress);
     advanceRhythm(deltaMs);
     updateSkipSkillWindow();
+    return effectiveClimbSpeed();
   }
 
   function setFeedback(message, kind = 'neutral') {
@@ -1287,6 +1291,10 @@ export function createGame(options = {}) {
     const event = state.pendingMonsterEvent;
     if (!event) return false;
     state.pendingMonsterEvent = null;
+    if (event.encounterDeferredUntilTransition) {
+      event.encounterSpeedFloorsPerSecond = effectiveClimbSpeed();
+    }
+    delete event.encounterDeferredUntilTransition;
     beginMonsterEvent(event);
     return true;
   }
@@ -1724,18 +1732,60 @@ export function createGame(options = {}) {
   }
 
   function beginMonsterEvent(event) {
+    const queuedEncounterSpeed = Number(event.encounterSpeedFloorsPerSecond);
+    const encounterSpeed = Number.isFinite(queuedEncounterSpeed) && queuedEncounterSpeed >= 0
+      ? queuedEncounterSpeed
+      : effectiveClimbSpeed();
+    delete event.encounterSpeedFloorsPerSecond;
     clearTemporarySpeedBonus();
     event.triggered = true;
     event.skipWindowUnlocked = false;
     state.activeMonsterEvent = event;
     if (!event.monster) event.monster = chooseMonster(random, options.monsters);
     state.activeMonster = event.monster;
-    runStatistics?.recordMonsterEncounter(event, state.activeMonster, state.timerMs);
+    const encounterAttempt = runStatistics?.recordMonsterEncounter(event, state.activeMonster, state.timerMs, {
+      effectiveSpeedFloorsPerSecond: encounterSpeed
+    }) ?? ((event.encounterAttemptCount = (Number(event.encounterAttemptCount) || 0) + 1));
+    event.encounterAttemptCount = Math.max(Number(event.encounterAttemptCount) || 0, encounterAttempt);
     const monsterOrder = Math.max(1, Number.isFinite(event.id)
       ? event.id
       : state.monsterEvents.indexOf(event) + 1);
     state.monsterMaxHp = GAME_CONFIG.monsterBaseHp + (monsterOrder - 1) * GAME_CONFIG.monsterHpIncrement;
     state.monsterHp = Math.min(state.monsterMaxHp, Math.max(0, state.activeMonster.initialHp ?? state.monsterMaxHp));
+    const collisionUpgradeCount = upgradeCount('max-speed');
+    const collisionMultiplier = collisionUpgradeCount * upgradeEffectAmount('max-speed', 'collisionMultiplierPerSelection');
+    const collisionCalculatedDamage = encounterSpeed * collisionMultiplier;
+    const collisionHpBefore = state.monsterHp;
+    const collisionActualDamage = Math.min(collisionHpBefore, collisionCalculatedDamage);
+    if (event.collisionProcessedAttemptCount !== encounterAttempt) {
+      event.collisionProcessedAttemptCount = encounterAttempt;
+      state.monsterHp = Math.max(0, collisionHpBefore - collisionActualDamage);
+      runStatistics?.recordCollisionDamage(event, {
+        encounterAttempt,
+        floor: event.floor,
+        timerMs: state.timerMs,
+        effectiveSpeedFloorsPerSecond: encounterSpeed,
+        upgradeCount: collisionUpgradeCount,
+        multiplier: collisionMultiplier,
+        calculatedDamage: collisionCalculatedDamage,
+        actualDamage: collisionActualDamage,
+        defeated: collisionHpBefore > 0 && state.monsterHp <= 0
+      });
+      notifyDebug('onMonsterCollision', {
+        eventId: event.id,
+        monsterId: state.activeMonster.id,
+        floor: event.floor,
+        encounterAttempt,
+        effectiveSpeedFloorsPerSecond: encounterSpeed,
+        upgradeCount: collisionUpgradeCount,
+        multiplier: collisionMultiplier,
+        calculatedDamage: collisionCalculatedDamage,
+        actualDamage: collisionActualDamage,
+        monsterHpBefore: collisionHpBefore,
+        monsterHpAfter: state.monsterHp,
+        defeated: collisionHpBefore > 0 && state.monsterHp <= 0
+      });
+    }
     state.combatDefenseRound = null;
     state.combatRapidTap = null;
     state.combatPendingDamage = 0;
@@ -1743,14 +1793,6 @@ export function createGame(options = {}) {
     state.combatAttackDamageContext = null;
     state.activeQte = null;
     state.qteItemUse = null;
-    state.preparedQte = createQte(
-      state.activeMonster,
-      random,
-      qteDurationForContext(QTE_CONTEXT.ENCOUNTER),
-      { context: QTE_CONTEXT.ENCOUNTER }
-    );
-    state.preparedQte.monsterHp = state.monsterHp;
-    state.preparedQte.monsterMaxHp = state.monsterMaxHp;
     state.monsterDebuffApplied = false;
     if (state.rhythmRound) {
       notifyDebug('onRhythmRoundCancelled', {
@@ -1761,6 +1803,19 @@ export function createGame(options = {}) {
     state.rhythmRound = null;
     cancelPendingRhythmSpawn('monster-event');
     state.eventPhaseElapsedMs = 0;
+    if (state.monsterHp <= 0) {
+      state.preparedQte = null;
+      beginCombatVictory();
+      return;
+    }
+    state.preparedQte = createQte(
+      state.activeMonster,
+      random,
+      qteDurationForContext(QTE_CONTEXT.ENCOUNTER),
+      { context: QTE_CONTEXT.ENCOUNTER }
+    );
+    state.preparedQte.monsterHp = state.monsterHp;
+    state.preparedQte.monsterMaxHp = state.monsterMaxHp;
     state.eventPhaseDurationMs = GAME_CONFIG.monsterWarningFlashCount * GAME_CONFIG.monsterWarningFlashDurationMs +
       Math.max(0, GAME_CONFIG.monsterWarningFlashCount - 1) * GAME_CONFIG.monsterWarningGapDurationMs;
     state.mode = 'EVENT_WARNING';
@@ -2128,7 +2183,7 @@ export function createGame(options = {}) {
       }
 
       advanceOfficialTime(elapsedMs);
-      advanceAutomaticClimb(elapsedMs, reachesBoundary ? distanceToBoundary : null);
+      const effectiveSpeedAtBoundary = advanceAutomaticClimb(elapsedMs, reachesBoundary ? distanceToBoundary : null);
       remainingMs = Math.max(0, remainingMs - elapsedMs);
 
       if (!reachesBoundary) continue;
@@ -2136,6 +2191,7 @@ export function createGame(options = {}) {
       const crossedEvent = firstCrossedMonsterEvent(previousProgress, boundary, state.monsterEvents);
       if (crossedEvent) {
         crossedEvent.triggered = true;
+        crossedEvent.encounterSpeedFloorsPerSecond = effectiveSpeedAtBoundary;
         state.pendingMonsterEvent = crossedEvent;
       }
       if (nextRhythmOrb && Math.abs(boundary - nextRhythmOrb.floor) <= 1e-8) {
@@ -2153,6 +2209,9 @@ export function createGame(options = {}) {
       if (Math.abs(boundary - nextNodeProgress) <= 1e-8) {
         state.stepPhase = 0;
         syncStairNode(boundary);
+      }
+      if (state.pendingMonsterEvent) {
+        state.pendingMonsterEvent.encounterDeferredUntilTransition = state.isLandingPaused || state.isTurning;
       }
       if (!state.isLandingPaused && !state.isTurning) startPendingMonsterEvent();
     }
